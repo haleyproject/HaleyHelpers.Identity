@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <HaleyIdentityDatabaseSource Condition="'$(HaleyIdentityDatabaseSource)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\dpod9\Architecture\Haley\Identity\Database\MariaDB</HaleyIdentityDatabaseSource>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(HaleyIdentityDatabaseSource)\schema.sql" LogicalName="Haley.Identity.Database.MariaDB.schema.sql" Link="Database\MariaDB\schema.sql" />
+    <EmbeddedResource Include="$(HaleyIdentityDatabaseSource)\seed.sql" LogicalName="Haley.Identity.Database.MariaDB.seed.sql" Link="Database\MariaDB\seed.sql" />
+  </ItemGroup>
+  <Target Name="CheckHaleyIdentityCanonicalSchema" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(HaleyIdentityDatabaseSource)\schema.sql')" Text="Restore the canonical Haley Identity SQL or configure HaleyIdentityDatabaseSource." />
+  </Target>
+</Project>

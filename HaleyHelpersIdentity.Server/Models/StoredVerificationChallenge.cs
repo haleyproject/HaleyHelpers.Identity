@@ -1,0 +1,2 @@
+namespace Haley.Models;
+public sealed record StoredVerificationChallenge(long LocalChallengeId, Guid ChallengeId, Guid ApplicationId, Guid? SubjectId, string Purpose, byte[] ContextHash, IdentityRecordStatus Status, int Attempts, int MaximumAttempts, int GrantValiditySeconds, byte[] CodeHash, string CodeAlgorithm, string? CodeParameters, DateTimeOffset CodeExpiresAt, byte[]? LinkHash, DateTimeOffset NotBefore, DateTimeOffset ExpiresAt);

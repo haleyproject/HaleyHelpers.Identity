@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+<PropertyGroup><AssemblyName>Haley.Identity.Host</AssemblyName><PackageId>Haley.Identity.Host</PackageId><IsPackable>false</IsPackable></PropertyGroup>
+<ItemGroup><ProjectReference Include="../HaleyHelpersIdentity.Server/HaleyHelpersIdentity.Server.csproj" /></ItemGroup>
+
+<ItemGroup><None Update="*.container;podman.cfile" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup></Project>

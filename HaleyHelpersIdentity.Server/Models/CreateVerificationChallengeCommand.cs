@@ -1,0 +1,2 @@
+namespace Haley.Models;
+public sealed record CreateVerificationChallengeCommand(Guid ChallengeId, Guid ApplicationId, Guid? TenantId, Guid SubjectId, string PolicyCode, string Purpose, byte[] DestinationHash, byte[] ContextHash, byte[] CodeHash, string CodeAlgorithm, string CodeParameters, DateTimeOffset CodeExpiresAt, byte[]? LinkHash, int ExhaustedCooldownSeconds, DateTimeOffset CreatedAt, DateTimeOffset NotBefore, DateTimeOffset ExpiresAt);

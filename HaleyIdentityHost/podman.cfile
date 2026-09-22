@@ -1,0 +1,6 @@
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app/target
+COPY . .
+RUN mkdir -p Config Keys && if [ -f appsettings.json ]; then mv appsettings.json Config/appsettings.json; fi
+EXPOSE 5000
+ENTRYPOINT ["dotnet", "Haley.Identity.Host.dll"]

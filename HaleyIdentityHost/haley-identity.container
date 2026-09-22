@@ -1,0 +1,22 @@
+[Unit]
+Description=Haley Identity Container
+Requires=dlab-maria.service
+After=network.target dlab-maria.service
+
+[Container]
+ContainerName=haley-identity
+Image=localhost/haley.identity:0.1.0
+Network=dlab-net
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=Haley__Identity__ListenUrl=http://0.0.0.0:5000
+Volume=hi-config:/app/target/Config:z
+Volume=hi-keys:/app/target/Keys:z
+SecurityLabelDisable=true
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

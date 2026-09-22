@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><AssemblyName>Haley.Helpers.Identity</AssemblyName><PackageId>Haley.Helpers.Identity</PackageId><IsPackable>true</IsPackable><Version Condition="'$(HaleyHelpersIdentityVersion)' != ''">$(HaleyHelpersIdentityVersion)</Version></PropertyGroup>
+<Choose><When Condition="'$(HaleyIdentityUseSourceReferences)' == 'true'"><ItemGroup><ProjectReference Include="$(HaleyProject)/HaleyAbstractions/HaleyAbstractions/HaleyAbstractions.csproj" /></ItemGroup></When><Otherwise><ItemGroup><PackageReference Include="Haley.Abstractions" Version="1.3.15" /></ItemGroup></Otherwise></Choose>
+<Choose><When Condition="'$(HaleyIdentityUseSourceReferences)' == 'true'"><ItemGroup><ProjectReference Include="$(HaleyProject)/HaleyRest/HaleyRest/HaleyRest.csproj" /></ItemGroup></When><Otherwise><ItemGroup><PackageReference Include="Haley.Rest" Version="3.0.30" /></ItemGroup></Otherwise></Choose>
+<ItemGroup><PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" /><PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" /><PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" /></ItemGroup>
+<PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(HaleyProject)\HaleyProject\HaleyProject.snk</AssemblyOriginatorKeyFile>
+    <Authors>The Haley Project</Authors>
+    <Company>TheHaleyProject</Company>
+    <Copyright>Haley</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>Haley.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/haleyproject/HaleyHelpers.Identity</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/haleyproject/HaleyHelpers.Identity</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GeneratePackageOnBuild Condition="'$(Configuration)' == 'Release'">true</GeneratePackageOnBuild>
+    <GeneratePackageOnBuild Condition="'$(Configuration)' == 'Debug'">false</GeneratePackageOnBuild>
+    <DebugType Condition="'$(Configuration)' == 'Release'">portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <PackageReleaseNotes>Initial reusable identity contracts, numeric account states, registration and remote client.</PackageReleaseNotes>
+    <Description>Reusable accounts, credentials, MFA and opaque sessions with embedded or remote access.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(HaleyProject)\HaleyProject\Haley.png" Pack="true" PackagePath="\" />
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

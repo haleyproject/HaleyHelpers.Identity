@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "HaleyIdentityHost": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:58749;http://localhost:58750"
+    }
+  }
+}

@@ -427,3 +427,11 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Local Identity build and verification output
+**/bin/
+**/obj/
+.vs/
+artifacts/
+TestResults/
+*.user
