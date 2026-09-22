@@ -10,7 +10,7 @@ Status: implemented and verified on 2026-09-22.
 - Standalone account API uses explicitly configured private-network trust. Kida retains OAuth and client policy enforcement.
 - MariaDB, .NET 8, Prototype. No existing local or production database modification. Preserve existing Kida credentials, MFA encryption and sessions.
 - Three production projects: client/contracts, Server, Host. Reuse Haley.Rest, Feedback, DB, security and hosting.
-- Preserve Kida public contracts through adapters. No duplicate shared implementations or canonical table definitions.
+- Shared identity models and service contracts are defined only in Haley and consumed directly by Kida. Kida retains OAuth-specific HTTP request contracts and JSON field compatibility at its transport boundary. C# consumers of the former Kida identity model types must update their namespaces and rebuild. No duplicate shared implementations or canonical table definitions.
 
 ## Delivery checklist
 
