@@ -2,8 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Haley.Abstractions;
 using Haley.Models;
-using Haley.Abstractions;
-using Haley.Models;
 using Haley.Constants;
 using Haley.Utils;
 using Microsoft.Extensions.Options;
@@ -16,7 +14,7 @@ public sealed class PasswordRecoveryService(
     IPasswordHasher passwordHasher,
     IIdentityUuidGenerator uuids,
     IIdentityClock clock,
-    IOptions<IdentityServerOptions> options) : IPasswordRecoveryService
+    IOptions<IdentityServerOptions> options, VerificationProofService proofs) : IPasswordRecoveryService
 {
     private const string Source = "Haley.Identity.PasswordRecovery";
 
@@ -55,35 +53,11 @@ public sealed class PasswordRecoveryService(
             return Ok(new PasswordResetInitiationResult(true));
         }
 
-        var now = clock.UtcNow;
-        var codeLength = Math.Clamp(options.Value.Verification.CodeLength, 4, 12);
-        var code = GenerateNumericCode(codeLength);
-        var codeHash = passwordHasher.Hash(code);
-        var challengeId = uuids.NewUuid7();
-        var codeExpiry = now.AddSeconds(Math.Clamp(options.Value.Verification.CodeValiditySeconds, 60, 3_600));
-        var resendAllowedAt = now.AddSeconds(Math.Clamp(options.Value.Verification.ResendDelaySeconds, 30, 86_400));
-        var contextHash = Hash(BuildContext(request.ApplicationId, resource, returnUri, state));
-        var policyCode = string.Equals(channel, "sms", StringComparison.Ordinal)
-            ? "standard-sms-6"
-            : "standard-email-6";
-        var challenge = new CreateVerificationChallengeCommand(
-            challengeId,
-            request.ApplicationId,
-            null,
-            subject.UserId,
-            policyCode,
-            IdentityPurposes.PasswordReset,
-            Hash(subject.DestinationNormalized),
-            contextHash,
-            codeHash.Value,
-            codeHash.Algorithm,
-            codeHash.ParametersPayload,
-            codeExpiry,
-            null,
-            Math.Clamp(options.Value.Verification.ExhaustedCooldownSeconds, 60, 86_400),
-            now,
-            now,
-            codeExpiry);
+        var prepared = proofs.Create(new(request.ApplicationId, subject.UserId, IdentityPurposes.PasswordReset,
+            subject.DestinationNormalized, Hash(BuildContext(request.ApplicationId, resource, returnUri, state)),
+            Math.Clamp(options.Value.Verification.CodeValiditySeconds, 60, 3600),
+            PolicyCode: channel == "sms" ? "standard-sms-6" : "standard-email-6"));
+        var challenge = prepared.Challenge;
         var created = await store.CreateVerificationChallengeAsync(challenge, cancellationToken).ConfigureAwait(false);
         if (!created)
         {
@@ -92,16 +66,16 @@ public sealed class PasswordRecoveryService(
             return Ok(new PasswordResetInitiationResult(true));
         }
 
-        var resetPath = BuildResetPath(challengeId, request.ApplicationId, resource, returnUri, state);
+        var resetPath = BuildResetPath(challenge.ChallengeId, request.ApplicationId, resource, returnUri, state);
         return Ok(new PasswordResetInitiationResult(
             true,
             new PasswordResetDeliveryReceipt(
-                challengeId,
+                challenge.ChallengeId,
                 channel,
                 subject.DestinationDisplay,
-                code,
-                codeExpiry,
-                resendAllowedAt,
+                prepared.Code,
+                challenge.CodeExpiresAt,
+                prepared.ResendAllowedAt,
                 resetPath)));
     }
 
@@ -138,11 +112,7 @@ public sealed class PasswordRecoveryService(
             return Fail<PasswordResetGrantReceipt>(IdentityErrorCodes.VerificationInvalid);
         }
 
-        var valid = now < challenge.CodeExpiresAt && passwordHasher.Verify(
-            request.Code.Trim(),
-            challenge.CodeHash,
-            challenge.CodeAlgorithm,
-            challenge.CodeParameters);
+        var valid = proofs.Verify(challenge, request.Code, null, now);
         var grantId = uuids.NewUuid7();
         var grantExpiry = now.AddSeconds(Math.Clamp(options.Value.Verification.PasswordResetSeconds, 300, 86_400));
         var completed = await store.CompleteVerificationAsync(
@@ -369,17 +339,6 @@ public sealed class PasswordRecoveryService(
     }
 
     private static byte[] Hash(string value) => SHA256.HashData(Encoding.UTF8.GetBytes(value));
-
-    private static string GenerateNumericCode(int length)
-    {
-        var code = new char[length];
-        for (var index = 0; index < code.Length; index++)
-        {
-            code[index] = (char)('0' + RandomNumberGenerator.GetInt32(10));
-        }
-
-        return new string(code);
-    }
 
     private static IFeedback<T> Ok<T>(T value) => new Feedback<T>(true, "Identity operation completed.", value)
     {

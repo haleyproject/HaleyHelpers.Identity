@@ -78,4 +78,19 @@ public sealed class IdentityRemoteClient(IdentityRemoteTransport transport) : II
     public ValueTask<IFeedback<PasswordResetCompletionReceipt>> CompletePasswordResetAsync(CompletePasswordResetRequest request, CancellationToken cancellationToken = default) =>
         transport.SendAsync<PasswordResetCompletionReceipt>("CompletePasswordReset", "password/resets/completion", Method.POST, request, cancellationToken);
 
+    public ValueTask<IFeedback<EmailVerificationInfo>> GetEmailVerificationAsync(string email, CancellationToken cancellationToken = default) =>
+        transport.SendAsync<EmailVerificationInfo>("GetEmailVerification", "verification/email/status", Method.POST, new AccountEmailRequest(email), cancellationToken);
+
+    public ValueTask<IFeedback<IdentityVerificationInitiation>> BeginVerificationAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        Enum.IsDefined(request.Purpose)
+            ? transport.SendAsync<IdentityVerificationInitiation>(IdentityVerificationRoutes.Operation(request.Purpose, false),
+                $"verification/{IdentityVerificationRoutes.Segment(request.Purpose)}/challenges", Method.POST, request, cancellationToken)
+            : ValueTask.FromResult<IFeedback<IdentityVerificationInitiation>>(new Feedback<IdentityVerificationInitiation>(false, "A single valid purpose is required.") { Key = "invalid_request", Code = 400 });
+
+    public ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteVerificationAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        Enum.IsDefined(request.Purpose)
+            ? transport.SendAsync<IdentityVerificationCompletion>(IdentityVerificationRoutes.Operation(request.Purpose, true),
+                $"verification/{IdentityVerificationRoutes.Segment(request.Purpose)}/completion", Method.POST, request, cancellationToken)
+            : ValueTask.FromResult<IFeedback<IdentityVerificationCompletion>>(new Feedback<IdentityVerificationCompletion>(false, "A single valid purpose is required.") { Key = "invalid_request", Code = 400 });
+
 }

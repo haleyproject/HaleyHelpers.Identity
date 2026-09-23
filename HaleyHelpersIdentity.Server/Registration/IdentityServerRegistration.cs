@@ -31,6 +31,13 @@ public static class IdentityServerRegistration
             value.PasswordHashIterations >= 100000 && value.PasswordHistoryCount is >= 0 and <= 100 &&
             value.MaximumFailedAttempts is >= 1 and <= 100 && value.LockoutSeconds is >= 60 and <= 86400,
             "Identity database, session, password and account-lock configuration is invalid.")
+            .Validate(value => value.Verification.MaximumCodeValiditySeconds is >= 60 and <= 3600 &&
+                value.Verification.MaximumTokenValiditySeconds is >= 60 and <= 2592000 &&
+                value.Verification.CodeValiditySeconds >= 60 && value.Verification.CodeValiditySeconds <= value.Verification.MaximumCodeValiditySeconds &&
+                value.Verification.ActivationLinkSeconds >= 60 && value.Verification.ActivationLinkSeconds <= value.Verification.MaximumTokenValiditySeconds &&
+                value.Verification.LinkProofSeconds >= 60 && value.Verification.LinkProofSeconds <= value.Verification.MaximumTokenValiditySeconds &&
+                value.Verification.PasswordResetSeconds >= 60 && value.Verification.PasswordResetSeconds <= value.Verification.MaximumTokenValiditySeconds,
+                "Identity verification lifetimes exceed the configured bounds.")
             .Validate(value => value.SessionBindingKeys.All(app => Guid.TryParseExact(app.Key, "D", out var id) && id != Guid.Empty &&
                 app.Value.All(key => !string.IsNullOrWhiteSpace(key.Key) && key.Value.Length is >= 32 and <= 512)),
                 "Session binding keys require canonical application GUIDs, key identifiers and secrets of 32 to 512 characters.").ValidateOnStart();
@@ -63,6 +70,10 @@ public static class IdentityServerRegistration
         services.TryAddSingleton<IIdentityRecoveryAuthorization, IdentityRecoveryAuthorization>();
         services.TryAddSingleton<IPasswordRecoveryService, PasswordRecoveryService>();
         services.TryAddScoped<IIdentityApplicationContext, IdentityApplicationContext>();
+        services.TryAddSingleton<VerificationProofService>();
+        services.TryAddSingleton<IIdentityVerificationStore>(provider => provider.GetRequiredService<IdentityStore>());
+        services.TryAddSingleton<IIdentityVerificationMfaPolicy, IdentityVerificationMfaPolicy>();
+        services.TryAddScoped<IdentityVerificationService>();
         services.TryAddScoped<IdentityService>();
         services.TryAddScoped<IIdentity>(provider => provider.GetRequiredService<IdentityService>());
         services.TryAddSingleton<IdentityDatabaseInstaller>();

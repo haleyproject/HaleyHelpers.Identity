@@ -8,7 +8,7 @@ using static Haley.Internal.IdentityFields;
 namespace Haley.Services;
 
 /// <summary>Owns account persistence and transactions shared by standalone hosts and Kida.</summary>
-public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIdentityCredentialStore, IIdentityRecoveryStore
+public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIdentityCredentialStore, IIdentityRecoveryStore, IIdentityVerificationStore
 {
     private readonly IIdentityUuidGenerator _uuidGenerator;
     private readonly IdentityServerOptions _settings;
@@ -1436,6 +1436,9 @@ public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIde
         {
             try
             {
+                if (await RowAsync(IdentityAccountQueries.FindUserForUpdate, load,
+                    ("@uid", IdentityDatabase.ToBinary(command.SubjectId))).ConfigureAwait(false) is null)
+                { transaction.Rollback(); return false; }
                 var policyId = await ScalarAsync<long?>(IdentityLifecycleQueries.FIND_POLICY_ID, load,
                     (POLICY_CODE, command.PolicyCode)).ConfigureAwait(false);
                 if (policyId is null) { transaction.Rollback(); return false; }
@@ -1491,7 +1494,7 @@ public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIde
             Required<string>(row, "code_algorithm"), OptionalString(row, "code_params"),
             AsUtc(Required<DateTime>(row, "code_expires_at")),
             HasValue(row, "link_hash") ? Required<byte[]>(row, "link_hash") : null,
-            AsUtc(Required<DateTime>(row, "not_before")), AsUtc(Required<DateTime>(row, "expires_at")));
+            AsUtc(Required<DateTime>(row, "not_before")), AsUtc(Required<DateTime>(row, "expires_at")), Required<byte[]>(row, "destination_hash"));
     }
 
 

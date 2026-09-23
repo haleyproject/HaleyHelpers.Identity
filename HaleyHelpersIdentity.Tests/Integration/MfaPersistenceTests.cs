@@ -27,7 +27,7 @@ public sealed class MfaPersistenceTests
         Assert.True((await client.VerifyMfaAsync(recoveryRequest)).Status); Assert.False((await client.VerifyMfaAsync(recoveryRequest)).Status);
         Assert.Equal(0L, Convert.ToInt64(await database.SqlAsync("SELECT COUNT(*) FROM credential")));
     }
-    private static string Code(string base32, DateTimeOffset at)
+    internal static string Code(string base32, DateTimeOffset at)
     {
         const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
         var bits = string.Concat(base32.TrimEnd('=').Select(c => Convert.ToString(alphabet.IndexOf(c), 2).PadLeft(5, '0')));

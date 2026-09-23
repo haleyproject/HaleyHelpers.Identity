@@ -173,7 +173,7 @@ internal static class IdentityLifecycleQueries
 
     internal const string FIND_CHALLENGE = $"""
         SELECT c.`id` AS local_challenge_id,c.`uid` AS challenge_uid,ctx.`application_uid`,ctx.`subject_uid`,
-               ctx.`purpose`,ctx.`context_hash`,c.`status`,c.`attempts`,c.`not_before`,c.`expires_at`,
+               ctx.`purpose`,ctx.`context_hash`,ctx.`destination_hash`,c.`status`,c.`attempts`,c.`not_before`,c.`expires_at`,
                p.`max_attempts`,p.`grant_validity`,d.`code_hash`,d.`code_algorithm`,d.`code_params`,d.`code_expires_at`,d.`link_hash`
           FROM `verification_challenge` c
           JOIN `verification_policy` p ON p.`id`=c.`policy_id`

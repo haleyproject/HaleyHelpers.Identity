@@ -7,7 +7,7 @@ namespace Haley.Services;
 public sealed class IdentityService(IdentityStore store, IMfaService mfa,
     IIdentityApplicationContext application, IPasswordHasher hasher,
     ISecretTokenGenerator tokens, IIdentityUuidGenerator uuids, IIdentityClock clock,
-    IdentityCredentialVerifier credentials, IPasswordRecoveryService recovery, IOptions<IdentityServerOptions> options) : IIdentity
+    IdentityCredentialVerifier credentials, IPasswordRecoveryService recovery, IOptions<IdentityServerOptions> options, IdentityVerificationService verification) : IIdentity
 {
     public async ValueTask<IFeedback<UserIdentity>> GetAccountAsync(Guid userId, CancellationToken cancellationToken = default) =>
         Found(await store.FindUserAsync(userId, cancellationToken).ConfigureAwait(false));
@@ -19,7 +19,10 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
 
     public async ValueTask<IFeedback<UserIdentity>> EnsureAccountAsync(EnsureAccountRequest request, CancellationToken cancellationToken = default)
     {
-        var command = AccountCommand(request.Email, request.DisplayName, request.SourceReference);
+        if (request.InitialStatus is not (IdentityStatus.Pending or IdentityStatus.Active))
+            return Fail<UserIdentity>("invalid_status", "New accounts must be pending or active.");
+        var command = AccountCommand(request.Email, request.DisplayName, request.SourceReference) is { } details
+            ? details with { InitialStatus = request.InitialStatus } : null;
         if (command is null) return Fail<UserIdentity>("invalid_account", "An application ID and valid account details are required.");
         var account = await store.EnsureAccountAsync(command, cancellationToken).ConfigureAwait(false);
         return account is null ? Fail<UserIdentity>("account_conflict", "The email or source identifier is associated with conflicting accounts.") : Ok(account);
@@ -185,6 +188,13 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
 
     public ValueTask<IFeedback<PasswordResetCompletionReceipt>> CompletePasswordResetAsync(CompletePasswordResetRequest request, CancellationToken cancellationToken = default) =>
         recovery.CompleteResetAsync(request with { ApplicationId = application.ApplicationId, Context = application.OwnerContext ?? "haley.identity" }, cancellationToken);
+
+    public ValueTask<IFeedback<EmailVerificationInfo>> GetEmailVerificationAsync(string email, CancellationToken cancellationToken = default) =>
+        verification.GetEmailVerificationAsync(email, cancellationToken);
+    public ValueTask<IFeedback<IdentityVerificationInitiation>> BeginVerificationAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        verification.BeginAsync(request, cancellationToken);
+    public ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteVerificationAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        verification.CompleteAsync(request, cancellationToken);
 
     private EnsureAccountCommand? AccountCommand(string email, string? displayName, string? source)
     {

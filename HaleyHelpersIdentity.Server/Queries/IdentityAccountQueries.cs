@@ -26,7 +26,7 @@ internal static class IdentityAccountQueries
         """;
     internal const string InsertAccount = """
         INSERT IGNORE INTO `user_account` (`uid`,`status`,`normalized`,`display_name`,`flags`,`created_at`,`modified_at`)
-        VALUES (@uid,2,@email,@display,1,@at,@at) RETURNING `id`;
+        VALUES (@uid,@status,@email,@display,1,@at,@at) RETURNING `id`;
         """;
     internal const string InsertContact = """
         INSERT IGNORE INTO `contact_method` (`uid`,`user_id`,`kind`,`normalized`,`display`,`flags`,`created_at`)

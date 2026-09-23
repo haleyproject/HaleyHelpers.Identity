@@ -28,4 +28,7 @@ public interface IIdentity
     ValueTask<IFeedback<PasswordResetInitiationResult>> BeginPasswordResetAsync(BeginPasswordResetRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<PasswordResetGrantReceipt>> VerifyPasswordResetCodeAsync(VerifyPasswordResetCodeRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<PasswordResetCompletionReceipt>> CompletePasswordResetAsync(CompletePasswordResetRequest request, CancellationToken cancellationToken = default);
+    ValueTask<IFeedback<EmailVerificationInfo>> GetEmailVerificationAsync(string email, CancellationToken cancellationToken = default);
+    ValueTask<IFeedback<IdentityVerificationInitiation>> BeginVerificationAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default);
+    ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteVerificationAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default);
 }

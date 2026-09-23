@@ -40,14 +40,14 @@ public sealed partial class IdentityStore
         {
             var localId = await ScalarAsync<long?>(IdentityAccountQueries.InsertAccount, load,
                 ("@uid", IdentityDatabase.ToBinary(command.UserId)), ("@email", command.Email),
-                ("@display", command.DisplayName), ("@at", command.CreatedAt.UtcDateTime)).ConfigureAwait(false);
+                ("@display", command.DisplayName), ("@status", (int)command.InitialStatus), ("@at", command.CreatedAt.UtcDateTime)).ConfigureAwait(false);
             if (localId is not null)
             {
                 if (await ExecAsync(IdentityAccountQueries.InsertContact, load,
                     ("@uid", IdentityDatabase.ToBinary(command.ContactId)), ("@user", localId.Value),
                     ("@email", command.Email), ("@at", command.CreatedAt.UtcDateTime)).ConfigureAwait(false) != 1) return null;
                 await AddOutboxAsync(load, _settings.EventPrefix + ".user.created.v2", "user_account", command.UserId,
-                    JsonSerializer.Serialize(new { userId = command.UserId, status = (int)IdentityStatus.Active }),
+                    JsonSerializer.Serialize(new { userId = command.UserId, status = (int)command.InitialStatus }),
                     command.CreatedAt).ConfigureAwait(false);
             }
             rows = await RowsAsync(IdentityAccountQueries.FindEmailForUpdate, load, ("@email", command.Email)).ConfigureAwait(false);
@@ -75,36 +75,44 @@ public sealed partial class IdentityStore
         {
             try
             {
-                foreach (var extension in _extensions)
-                    if (!await extension.IsApplicationActiveAsync(command.Account.ApplicationId, load).ConfigureAwait(false))
-                    { transaction.Rollback(); return false; }
-                var row = command.AuthenticatedUserId is Guid subject
-                    ? await RowAsync(IdentityAccountQueries.FindUserForUpdate, load, ("@uid", IdentityDatabase.ToBinary(subject))).ConfigureAwait(false)
-                    : await EnsureAccountRowAsync(command.Account, command.CreateIfMissing, load).ConfigureAwait(false);
-                if (row is null || ParseStatus(Required<int>(row, "status")) != IdentityStatus.Active)
-                { transaction.Rollback(); return false; }
-                var userId = Required<long>(row, "local_user_id");
-                if (command.ExpectedCredentialId is not null)
-                {
-                    var current = await RowAsync(IdentityAccountQueries.FindCurrentCredential, load, ("@user", userId)).ConfigureAwait(false);
-                    if (current is null || Required<long>(current, "id") != command.ExpectedCredentialId)
-                    { transaction.Rollback(); return false; }
-                }
-                var localSessionId = await CreateSessionAsync(new(command.SessionId, userId, command.Account.ApplicationId, IdentitySessionKind.Opaque,
-                    command.ExpiresAt, command.Account.CreatedAt, command.AuthenticationMethods), load).ConfigureAwait(false);
-                await ExecAsync(IdentityAccountQueries.InsertSessionToken, load,
-                    ("@session", localSessionId), ("@hash", command.TokenHash)).ConfigureAwait(false);
-                foreach (var extension in _extensions)
-                    await extension.AfterOpaqueSessionCreatedAsync(localSessionId, command, load).ConfigureAwait(false);
-                await AddOutboxAsync(load, _settings.EventPrefix + ".session.started.v1", "user_session", command.SessionId,
-                    JsonSerializer.Serialize(new { userId = ToGuid(row, "user_uid"), sessionId = command.SessionId,
-                        clientId = command.Account.ApplicationId, authenticationMethods = command.AuthenticationMethods }),
-                    command.Account.CreatedAt).ConfigureAwait(false);
-                transaction.Commit();
-                return true;
+                var completed = await StartOpaqueSessionAsync(command, load).ConfigureAwait(false);
+                if (completed) transaction.Commit(); else transaction.Rollback();
+                return completed;
             }
             catch { transaction.Rollback(); throw; }
         }
+    }
+
+    private async ValueTask<bool> StartOpaqueSessionAsync(StartOpaqueSessionCommand command, DbExecutionLoad load)
+    {
+        foreach (var extension in _extensions)
+            if (!await extension.IsApplicationActiveAsync(command.Account.ApplicationId, load).ConfigureAwait(false))
+            { return false; }
+        var row = command.AuthenticatedUserId is Guid subject
+            ? await RowAsync(IdentityAccountQueries.FindUserForUpdate, load, ("@uid", IdentityDatabase.ToBinary(subject))).ConfigureAwait(false)
+            : await EnsureAccountRowAsync(command.Account, command.CreateIfMissing, load).ConfigureAwait(false);
+        if (row is null || ParseStatus(Required<int>(row, "status")) != IdentityStatus.Active)
+        { return false; }
+        var userId = Required<long>(row, "local_user_id");
+        if (command.ExpectedCredentialId is not null)
+        {
+            var current = await RowAsync(IdentityAccountQueries.FindCurrentCredential, load, ("@user", userId)).ConfigureAwait(false);
+            if (current is null || Required<long>(current, "id") != command.ExpectedCredentialId)
+            { return false; }
+        }
+        var localSessionId = await CreateSessionAsync(new(command.SessionId, userId, command.Account.ApplicationId, IdentitySessionKind.Opaque,
+            command.ExpiresAt, command.Account.CreatedAt, command.AuthenticationMethods), load).ConfigureAwait(false);
+        await ExecAsync(IdentityAccountQueries.InsertSessionToken, load,
+            ("@session", localSessionId), ("@hash", command.TokenHash)).ConfigureAwait(false);
+        foreach (var extension in _extensions)
+            await extension.AfterOpaqueSessionCreatedAsync(localSessionId, command, load).ConfigureAwait(false);
+        await AddOutboxAsync(load, _settings.EventPrefix + ".session.started.v1", "user_session", command.SessionId,
+            JsonSerializer.Serialize(new { userId = ToGuid(row, "user_uid"), sessionId = command.SessionId,
+                clientId = command.Account.ApplicationId, authenticationMethods = command.AuthenticationMethods }),
+            command.Account.CreatedAt).ConfigureAwait(false);
+
+        return true;
+
     }
 
     public async ValueTask<SessionValidation?> ValidateOpaqueSessionAsync(Guid applicationId, byte[] tokenHash,
@@ -133,48 +141,56 @@ public sealed partial class IdentityStore
         {
             try
             {
-                var current = await RowAsync(IdentityAccountQueries.CurrentCredentialByUser, load,
-                    ("@uid", IdentityDatabase.ToBinary(command.UserId))).ConfigureAwait(false);
-                if (current is null) { transaction.Rollback(); return false; }
-                var localUserId = Required<long>(current, "local_user_id");
-                var hasCredential = HasValue(current, "local_credential_id");
-                if (command.ExpectedCredentialId is not null &&
-                    (!hasCredential || Required<long>(current, "local_credential_id") != command.ExpectedCredentialId))
-                { transaction.Rollback(); return false; }
-                var history = await RowsAsync(IdentityAccountQueries.PasswordHistory, load,
-                    ("@user", localUserId), ("@count", Math.Clamp(_settings.PasswordHistoryCount, 0, 100))).ConfigureAwait(false);
-                if ((hasCredential && isReusedPassword(new(Required<byte[]>(current, "secret_hash"),
-                        Required<string>(current, "algorithm"), OptionalString(current, "params") ?? string.Empty))) ||
-                    history.Any(row => isReusedPassword(new(Required<byte[]>(row, "secret_hash"),
-                        Required<string>(row, "algorithm"), OptionalString(row, "params") ?? string.Empty))))
-                { transaction.Rollback(); return false; }
-                if (hasCredential)
-                {
-                    if (!await ReplacePasswordAsync(load, current, localUserId, Required<long>(current, "local_credential_id"),
-                        command.UserId, command.CredentialId, command.Password.Value, command.Password.Algorithm,
-                        command.Password.ParametersPayload, command.RequirePasswordChange, command.ChangedAt,
-                        _settings.EventPrefix + ".password.changed.v1", JsonSerializer.Serialize(new { userId = command.UserId })).ConfigureAwait(false))
-                    { transaction.Rollback(); return false; }
-                }
-                else
-                {
-                    await ExecAsync(IdentityUserQueries.INSERT_CREDENTIAL, load,
-                        (CREDENTIAL_UID, IdentityDatabase.ToBinary(command.CredentialId)), (USER_ID, localUserId),
-                        (SECRET_HASH, command.Password.Value), (ALGORITHM, command.Password.Algorithm),
-                        (PARAMS, command.Password.ParametersPayload), (CREATED_AT, command.ChangedAt.UtcDateTime)).ConfigureAwait(false);
-                    await ExecAsync(IdentityUserQueries.SET_PASSWORD_CHANGE_REQUIRED, load,
-                        (REQUIRED, command.RequirePasswordChange ? 1 : 0), (AT, command.ChangedAt.UtcDateTime), (USER_ID, localUserId)).ConfigureAwait(false);
-                    await ExecAsync(IdentityUserQueries.REVOKE_SESSIONS_AFTER_PASSWORD_CHANGE, load,
-                        (AT, command.ChangedAt.UtcDateTime), (USER_ID, localUserId)).ConfigureAwait(false);
-                    foreach (var extension in _extensions)
-                        await extension.AfterPasswordChangeAsync(command.UserId, localUserId, command.ChangedAt, load).ConfigureAwait(false);
-                    await AddOutboxAsync(load, _settings.EventPrefix + ".password.changed.v1", "user_account", command.UserId,
-                        JsonSerializer.Serialize(new { userId = command.UserId }), command.ChangedAt).ConfigureAwait(false);
-                }
-                transaction.Commit();
-                return true;
+                var completed = await SetCredentialAsync(command, isReusedPassword, load).ConfigureAwait(false);
+                if (completed) transaction.Commit(); else transaction.Rollback();
+                return completed;
             }
             catch { transaction.Rollback(); throw; }
         }
+    }
+
+    private async ValueTask<bool> SetCredentialAsync(SetCredentialCommand command, Func<PasswordHash, bool> isReusedPassword, DbExecutionLoad load)
+    {
+        var current = await RowAsync(IdentityAccountQueries.CurrentCredentialByUser, load,
+            ("@uid", IdentityDatabase.ToBinary(command.UserId))).ConfigureAwait(false);
+        if (current is null) { return false; }
+        var localUserId = Required<long>(current, "local_user_id");
+        var hasCredential = HasValue(current, "local_credential_id");
+        if (command.ExpectedCredentialId is not null &&
+            (!hasCredential || Required<long>(current, "local_credential_id") != command.ExpectedCredentialId))
+        { return false; }
+        var history = await RowsAsync(IdentityAccountQueries.PasswordHistory, load,
+            ("@user", localUserId), ("@count", Math.Clamp(_settings.PasswordHistoryCount, 0, 100))).ConfigureAwait(false);
+        if ((hasCredential && isReusedPassword(new(Required<byte[]>(current, "secret_hash"),
+                Required<string>(current, "algorithm"), OptionalString(current, "params") ?? string.Empty))) ||
+            history.Any(row => isReusedPassword(new(Required<byte[]>(row, "secret_hash"),
+                Required<string>(row, "algorithm"), OptionalString(row, "params") ?? string.Empty))))
+        { return false; }
+        if (hasCredential)
+        {
+            if (!await ReplacePasswordAsync(load, current, localUserId, Required<long>(current, "local_credential_id"),
+                command.UserId, command.CredentialId, command.Password.Value, command.Password.Algorithm,
+                command.Password.ParametersPayload, command.RequirePasswordChange, command.ChangedAt,
+                _settings.EventPrefix + ".password.changed.v1", JsonSerializer.Serialize(new { userId = command.UserId })).ConfigureAwait(false))
+            { return false; }
+        }
+        else
+        {
+            await ExecAsync(IdentityUserQueries.INSERT_CREDENTIAL, load,
+                (CREDENTIAL_UID, IdentityDatabase.ToBinary(command.CredentialId)), (USER_ID, localUserId),
+                (SECRET_HASH, command.Password.Value), (ALGORITHM, command.Password.Algorithm),
+                (PARAMS, command.Password.ParametersPayload), (CREATED_AT, command.ChangedAt.UtcDateTime)).ConfigureAwait(false);
+            await ExecAsync(IdentityUserQueries.SET_PASSWORD_CHANGE_REQUIRED, load,
+                (REQUIRED, command.RequirePasswordChange ? 1 : 0), (AT, command.ChangedAt.UtcDateTime), (USER_ID, localUserId)).ConfigureAwait(false);
+            await ExecAsync(IdentityUserQueries.REVOKE_SESSIONS_AFTER_PASSWORD_CHANGE, load,
+                (AT, command.ChangedAt.UtcDateTime), (USER_ID, localUserId)).ConfigureAwait(false);
+            foreach (var extension in _extensions)
+                await extension.AfterPasswordChangeAsync(command.UserId, localUserId, command.ChangedAt, load).ConfigureAwait(false);
+            await AddOutboxAsync(load, _settings.EventPrefix + ".password.changed.v1", "user_account", command.UserId,
+                JsonSerializer.Serialize(new { userId = command.UserId }), command.ChangedAt).ConfigureAwait(false);
+        }
+
+        return true;
+
     }
 }

@@ -65,6 +65,18 @@ public static class IdentityEndpoints
             (await identity.VerifyPasswordResetCodeAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "VerifyPasswordResetCode", options);
         Configure(group.MapPost("/password/resets/completion", async (CompletePasswordResetRequest request, IIdentity identity, CancellationToken ct) =>
             (await identity.CompletePasswordResetAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "CompletePasswordReset", options);
+        Configure(group.MapPost("/verification/email/status", async (AccountEmailRequest request, IIdentity identity, CancellationToken ct) =>
+            (await identity.GetEmailVerificationAsync(request.Email, ct).ConfigureAwait(false)).ToMinimalApiResult()), "GetEmailVerification", options);
+        foreach (var purpose in Enum.GetValues<VerificationPurpose>())
+        {
+            var segment = IdentityVerificationRoutes.Segment(purpose);
+            Configure(group.MapPost($"/verification/{segment}/challenges", async (BeginIdentityVerificationRequest request, IIdentity identity, CancellationToken ct) =>
+                request.Purpose != purpose ? Results.Problem(statusCode: 400, detail: "The purpose must match this route.") :
+                    (await identity.BeginVerificationAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), IdentityVerificationRoutes.Operation(purpose, false), options);
+            Configure(group.MapPost($"/verification/{segment}/completion", async (CompleteIdentityVerificationRequest request, IIdentity identity, CancellationToken ct) =>
+                request.Purpose != purpose ? Results.Problem(statusCode: 400, detail: "The purpose must match this route.") :
+                    (await identity.CompleteVerificationAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), IdentityVerificationRoutes.Operation(purpose, true), options);
+        }
         return group;
     }
 

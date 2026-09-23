@@ -11,6 +11,8 @@ public sealed class BoundaryTests
     [InlineData("CreateApplicationSession")]
     [InlineData("ValidateSession")]
     [InlineData("RevokeSession")]
+    [InlineData("BeginVerificationPasswordlessLogin")]
+    [InlineData("CompleteVerificationPasswordlessLogin")]
     public async Task SessionOperationsRequireAnApplicationBoundKey(string operation)
     {
         var applicationId = Guid.NewGuid();
