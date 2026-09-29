@@ -15,6 +15,7 @@ public sealed class IdentityServerOptions
     public string MfaProtectionPurpose { get; set; } = "haley.identity.mfa.totp";
     public string EventPrefix { get; set; } = "haley.identity";
     public IdentitySecretOptions SecretProtection { get; set; } = new();
+    public IdentityFederationOptions Federation { get; set; } = new();
     public IdentityMfaOptions Mfa { get; set; } = new();
     public string PasswordResetPath { get; set; } = "/identity/password/reset";
     public IdentityVerificationOptions Verification { get; set; } = new();

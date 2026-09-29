@@ -8,7 +8,7 @@ using static Haley.Internal.IdentityFields;
 namespace Haley.Services;
 
 /// <summary>Owns account persistence and transactions shared by standalone hosts and Kida.</summary>
-public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIdentityCredentialStore, IIdentityRecoveryStore, IIdentityVerificationStore
+public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIdentityCredentialStore, IIdentityRecoveryStore, IIdentityVerificationStore, IIdentityFederationStore
 {
     private readonly IIdentityUuidGenerator _uuidGenerator;
     private readonly IdentityServerOptions _settings;
@@ -644,6 +644,7 @@ public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIde
                     (USER_UID, userUid)).ConfigureAwait(false);
                 await ExecAsync(IdentityUserQueries.DELETE_SUBJECT_VERIFICATION_CHALLENGES, load,
                     (USER_UID, userUid)).ConfigureAwait(false);
+                await ExecAsync(IdentityUserQueries.DELETE_EXTERNAL_IDENTITIES, load, (USER_ID, localUserId)).ConfigureAwait(false);
                 await ExecAsync(IdentityUserQueries.DELETE_USER_SESSIONS, load,
                     (USER_ID, localUserId)).ConfigureAwait(false);
                 await ExecAsync(IdentityUserQueries.DELETE_ACCOUNT_LOCKS, load,

@@ -32,7 +32,7 @@ public sealed class IdentityRemoteTransport
         var request = _client.WithEndPoint($"{_options.ApiPath.Trim('/')}/{path.TrimStart('/')}")
             .AddCancellationToken(cancellationToken);
         request.AddHeader("X-Haley-Application-Id", _options.ApplicationId.ToString("D"));
-        if (operation is "AuthenticatePassword" or "CreateApplicationSession" or "ValidateSession" or "RevokeSession" or "BeginVerificationPasswordlessLogin" or "CompleteVerificationPasswordlessLogin")
+        if (operation is "AuthenticatePassword" or "CreateApplicationSession" or "ValidateSession" or "RevokeSession" or "BeginVerificationPasswordlessLogin" or "CompleteVerificationPasswordlessLogin" or "RedeemFederation")
         {
             if (!string.IsNullOrEmpty(_options.SessionKeyId)) request.AddHeader("X-Haley-Session-Key-Id", _options.SessionKeyId);
             if (!string.IsNullOrEmpty(_options.SessionBindingSecret)) request.AddHeader("X-Haley-Session-Key", _options.SessionBindingSecret);

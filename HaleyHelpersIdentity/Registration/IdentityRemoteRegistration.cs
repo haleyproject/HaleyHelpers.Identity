@@ -24,5 +24,6 @@ public static class IdentityRemoteRegistration
         services.TryAddSingleton<IIdentityRemoteAuthentication, IdentityRemoteAuthentication>();
         services.TryAddSingleton<IdentityRemoteTransport>();
         services.TryAddScoped<IIdentity, IdentityRemoteClient>();
+        services.TryAddScoped<IIdentityFederation, IdentityFederationRemoteClient>();
     }
 }

@@ -2,6 +2,7 @@ using static Haley.Internal.IdentityFields;
 namespace Haley.Internal;
 internal static class IdentityUserQueries
 {
+    internal const string DELETE_EXTERNAL_IDENTITIES = $"DELETE FROM `external_identity` WHERE `user_id`={USER_ID};";
     internal const string RESTORE_USER =
         $"UPDATE `user_account` SET `status`=2,`modified_at`={AT},`retired_at`=NULL WHERE `id`={ID} AND `status`=4;";
 

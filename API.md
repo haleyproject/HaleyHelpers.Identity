@@ -75,3 +75,7 @@ Complete accepts `ChallengeId`, the original `Purpose`/`ProofKind`/`Context`, an
 The result contains `UserId`, `Purpose`, `EmailVerified`, `AccountStatus`, and an optional `Session` present only for email login. Email/account verification and password reset do not sign the user in. Correcting an invalid/reused new password can reuse the still-pending verifier; a successful completion cannot be repeated.
 
 Expiry, attempt exhaustion, replay, application/context mismatch, changed destination and changed credentials are enforced. Resending replaces the pending challenge after the existing verification-policy cooldown. Email login's proof consumption and opaque session insertion are atomic, as are verification/password/account changes. State changes or credential replacement during completion cause rejection. An application link is only a carrier for the verifier and challenge metadata; completion is a POST with the sensitive payload in its body. Merely loading a link must not consume it.
+
+## Corporate authentication and management
+
+The reusable `IIdentityFederation` contract and full request/response flow are described in [FEDERATION.md](FEDERATION.md). The standalone host also serves `/admin/` and its password/cookie-protected `/admin/api` endpoints. These are host management routes; they are not part of the portable client API.

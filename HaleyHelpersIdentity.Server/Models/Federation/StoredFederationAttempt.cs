@@ -1,0 +1,2 @@
+namespace Haley.Models;
+public sealed record StoredFederationAttempt(long LocalRequestId, Guid RequestId, long LocalProviderId, Guid ProviderId, string ProviderCode, string ProviderIssuer, string ProviderConfiguration, Guid ApplicationId, string Context, string ProtocolRequestId, string ReturnUri, string State, byte[] CodeChallenge, DateTimeOffset ExpiresAt, FederationProtocol Protocol = FederationProtocol.Saml);

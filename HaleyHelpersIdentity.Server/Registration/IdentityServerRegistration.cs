@@ -62,6 +62,15 @@ public static class IdentityServerRegistration
             return keys.Length == 0 ? new IdentityUnconfiguredSecretProtector() : new AesGcmSecretProtector(keys, protection.ActiveKeyId);
         });
         services.TryAddSingleton<IdentityStore>();
+        services.TryAddSingleton<IIdentityFederationPolicy, IdentityFederationPolicy>();
+        services.TryAddScoped<IdentityAdministrationService>();
+        services.TryAddSingleton<IIdentityFederationStore>(provider => provider.GetRequiredService<IdentityStore>());
+        services.TryAddSingleton<IIdentitySamlCertificateService, FileSystemSamlCertificateService>();
+        services.TryAddSingleton<IIdentityProviderAdministrationService, IdentityProviderAdministrationService>();
+        services.TryAddSingleton<SamlAssertionValidator>();
+        services.TryAddSingleton<IFederationAuthenticationService, FederationAuthenticationService>();
+        services.TryAddSingleton<FederationHandoffService>();
+        services.TryAddScoped<IIdentityFederation, IdentityFederationService>();
         services.TryAddSingleton<IIdentityMfaStore>(provider => provider.GetRequiredService<IdentityStore>());
         services.TryAddSingleton<IIdentityCredentialStore>(provider => provider.GetRequiredService<IdentityStore>());
         services.TryAddSingleton<IMfaService, MfaService>();

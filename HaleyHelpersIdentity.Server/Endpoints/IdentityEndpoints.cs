@@ -77,6 +77,16 @@ public static class IdentityEndpoints
                 request.Purpose != purpose ? Results.Problem(statusCode: 400, detail: "The purpose must match this route.") :
                     (await identity.CompleteVerificationAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), IdentityVerificationRoutes.Operation(purpose, true), options);
         }
+        Configure(group.MapPost("/federation/discovery", async (ProviderDiscoveryRequest request, [FromServices] IIdentityFederation federation, CancellationToken ct) =>
+            (await federation.DiscoverAsync(request, ct)).ToMinimalApiResult()), "DiscoverIdentityProviders", options);
+        Configure(group.MapPost("/federation/attempts", async (BeginFederationRequest request, [FromServices] IIdentityFederation federation, CancellationToken ct) =>
+            (await federation.BeginAsync(request, ct)).ToMinimalApiResult()), "BeginFederation", options);
+        Configure(group.MapPost("/federation/saml/completion", async (CompleteSamlAuthenticationRequest request, [FromServices] IIdentityFederation federation, CancellationToken ct) =>
+            (await federation.CompleteSamlAsync(request, ct)).ToMinimalApiResult()), "CompleteSamlFederation", options);
+        Configure(group.MapPost("/federation/external/completion", async (CompleteExternalAuthenticationRequest request, [FromServices] IIdentityFederation federation, CancellationToken ct) =>
+            (await federation.CompleteExternalAsync(request, ct)).ToMinimalApiResult()), "CompleteExternalFederation", options);
+        Configure(group.MapPost("/federation/handoffs", async (RedeemFederationHandoffRequest request, [FromServices] IIdentityFederation federation, CancellationToken ct) =>
+            (await federation.RedeemAsync(request, ct)).ToMinimalApiResult()), "RedeemFederation", options);
         return group;
     }
 

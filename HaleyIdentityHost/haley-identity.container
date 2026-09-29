@@ -11,6 +11,9 @@ Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=Haley__Identity__ListenUrl=http://0.0.0.0:5000
 Volume=hi-config:/app/target/Config:z
 Volume=hi-keys:/app/target/Keys:z
+Volume=hi-state:/app/target/State:z
+Volume=hi-saml-certs:/app/target/SamlCerts:z
+PublishPort=127.0.0.1:7430:5000
 SecurityLabelDisable=true
 
 [Service]

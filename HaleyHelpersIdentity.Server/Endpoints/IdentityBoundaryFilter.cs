@@ -18,7 +18,7 @@ public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> optio
         if (!Guid.TryParse(context.HttpContext.Request.Headers["X-Haley-Application-Id"], out var applicationId) || applicationId == Guid.Empty)
             return Results.Problem("A valid application identifier is required.", statusCode: 400,
                 extensions: new Dictionary<string, object?> { ["code"] = "application_required" });
-        if (metadata.Operation is "AuthenticatePassword" or "CreateApplicationSession" or "ValidateSession" or "RevokeSession" or "BeginVerificationPasswordlessLogin" or "CompleteVerificationPasswordlessLogin")
+        if (metadata.Operation is "AuthenticatePassword" or "CreateApplicationSession" or "ValidateSession" or "RevokeSession" or "BeginVerificationPasswordlessLogin" or "CompleteVerificationPasswordlessLogin" or "RedeemFederation")
         {
             var keyId = context.HttpContext.Request.Headers["X-Haley-Session-Key-Id"].ToString();
             var provided = context.HttpContext.Request.Headers["X-Haley-Session-Key"].ToString();

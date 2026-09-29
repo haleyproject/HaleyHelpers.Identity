@@ -8,7 +8,9 @@ Reusable account storage and identity operations for .NET 8 applications. The sa
 | --- | --- |
 | HaleyHelpersIdentity | `Haley.Helpers.Identity`: public requests/results, numeric status enums, DI registration, and the single Haley.Rest client implementation |
 | HaleyHelpersIdentity.Server | Shared account, password, login protection, TOTP, recovery-code, verification/recovery, session and MariaDB engine; shared HTTP endpoints |
-| HaleyIdentityHost | Small private-network ASP.NET Core host using Haley AppMaker and the existing MariaDB instance |
+| HaleyIdentityHost | Private ASP.NET Core host with a compact Identity/Federation admin UI and password-based management sessions |
+| HaleyIdentityAdmin.Web | Shared Kida-derived Svelte components; Haley branding and only Identity/Federation navigation |
+| HaleyIdentity.Cred | Offline password-hash, lockout reset and secret-protection key tooling |
 | HaleyHelpersIdentity.Tests | Behavior, transport, transaction and isolated MariaDB integration tests |
 
 Use `HaleyHelpers.Identity_Ref.sln` while developing beside the Haley source repositories. `HaleyHelpers.Identity.sln` uses the approved Haley packages. The two new library packages are version 0.1.0. The host is deployed, not packaged as an SDK.
@@ -61,15 +63,15 @@ Inject `IIdentity`. Operations return the established Haley `IFeedback`/`IFeedba
 
 ## Ownership
 
-Haley owns account/profile/contact, credentials/password history, provenance, account locks/login history, MFA/recovery codes, generic verification challenges/grants, base sessions and the shared outbox. The shared SQL is embedded directly from the architecture repository. It is not copied into Kida's canonical schema.
+Haley owns account/profile/contact, credentials/password history, provenance, account locks/login history, MFA/recovery codes, generic verification challenges/grants, SAML and signed corporate federation, provider discovery and external links, base sessions and the shared outbox. The shared SQL is embedded directly from the architecture repository. It is not copied into Kida's canonical schema.
 
-Kida owns OAuth clients/secrets/scopes/grants, client identity policy, provider/federation/SAML orchestration, JWT/signing/token revocation and refresh families. `oauth_session_ctx` stores the Kida client and audience for either session protocol. `oauth_mfa_enroll_ctx` retains Kida's enrollment audience. The dependency direction is Kida to Haley. No other Kida capability is called by the shared engine.
+Kida owns OAuth clients/secrets/scopes/grants, client identity policy, tenant-specific provider association, JWT/signing/token revocation and refresh families. `oauth_session_ctx` stores the Kida client and audience for either session protocol. `oauth_mfa_enroll_ctx` retains Kida's enrollment audience. The dependency direction is Kida to Haley. No other Kida capability is called by the shared engine.
 
-A standalone deployment normally has its own identity database. Existing Kida is upgraded in place by applying the manual migration and deploying the composed Kida binaries. Do not run an unauthenticated standalone host against a Kida-managed database; doing so bypasses Kida's boundary and its transaction extensions.
+A standalone deployment normally has its own identity database. The current prototype baseline is a fresh install. Historical migrations do not upgrade existing databases to the federation extraction. Do not run an unauthenticated standalone host against a Kida-managed database; doing so bypasses Kida's boundary and its transaction extensions.
 
 ## API and deployment
 
-See [API reference](API.md), [initialization](initialization.md), and [migration guide](MIGRATION.md). The canonical shared schema is `Architecture/Haley/Identity/Database/MariaDB/schema.sql`; Kida's extension is `Architecture/Kida/Database/Security/Identity/MariaDB/schema.draft.sql`.
+See [corporate authentication](FEDERATION.md), [API reference](API.md), [initialization](initialization.md), and [migration guide](MIGRATION.md). The canonical shared schema is `Architecture/Haley/Identity/Database/MariaDB/schema.sql`; Kida's extension is `Architecture/Kida/Database/Security/Identity/MariaDB/schema.draft.sql`.
 
 ## Verification
 

@@ -70,3 +70,9 @@ build does not publish those dependencies.
 Publication is an explicit release action. Building packages and running the
 copy script do not publish anything. Check package and symbol availability on
 the destination feed after publishing.
+
+## Federation and standalone administration
+
+The same two libraries now include the federation contracts and engine. No extra SDK package is introduced. Publish the updated libraries together before building package-reference Kida solutions. The shared UI and Haley.Identity.Cred are deployment/build projects, not additional NuGet packages. Kida's source-reference solutions and the sibling shared UI checkout support development before package publication.
+
+Publish HaleyIdentityHost to build and include its Svelte UI automatically. Use Node/npm on the build machine. The frontend source is shared with Kida Admin and is not copied into either SDK package. SkipIdentityAdminBuild=true reuses existing built assets. The new canonical federation schema is embedded in the Server assembly.

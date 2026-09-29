@@ -1,27 +1,27 @@
-# Haley Identity initialization
+# Haley Identity quick deployment
 
-## Local or embedded development
+1. Build `HaleyHelpers.Identity_Ref.sln` beside the Haley source and architecture repositories. Publish `HaleyIdentityHost` with `-p:HaleyIdentityUseSourceReferences=true`. Publishing builds the shared Svelte UI, so Node/npm are required. The normal solution uses published Haley dependencies. Publish `HaleyIdentity.Cred` separately for offline setup commands.
+2. Set the adapter and MariaDB connection in `Config/appsettings.json`. Use a fresh database. `Initialize=true` installs the shared canonical schema and seed; it does not alter an older database.
+3. Place the host inside your private application network, then set `Haley:Identity:Server:TrustedNetwork=true`. The trusted machine API is not an internet-facing account administration API.
+4. Run `Haley.Identity.Cred hash-admin-password`. Put the resulting hash in `Haley:Identity:Management:PasswordHash`. The password is read privately from the terminal; never pass it as a command argument. Login is disabled while the hash is empty. Default admin-session expiry is 30 minutes.
+5. Run `Haley.Identity.Cred generate-secret-protection-key Keys/identity-2026.key`. Under `Haley:Identity:Server:SecretProtection`, set `ActiveKeyId=identity-2026` and add `{ "KeyId": "identity-2026", "Path": "Keys/identity-2026.key" }` to `Keys`. This key protects MFA and federation handoff payloads. Retain old keys during rotation.
+6. Assign each application a stable GUID. Configure `Server:SessionBindingKeys:<application-guid>:<key-id>` with a random secret of at least 32 characters. Configure exact callback URLs in `Server:AllowedReturnUris:<application-guid>` for corporate authentication and recovery. The application GUID by itself cannot issue or redeem a session.
+7. Start the host and open `/admin/`. The local default is `http://127.0.0.1:7430/admin/`. `/health` confirms startup after schema initialization. The UI contains Identity and Federation only. User accounts, password changes, MFA and sessions use the shared engine. Configure SAML certificates or signed corporate callbacks under Federation; see [the federation guide](FEDERATION.md).
 
-1. Build `HaleyHelpers.Identity_Ref.sln` beside the existing Haley and architecture repositories. The normal solution resolves Haley packages.
-2. Configure `AdapterStrings:identity` and `ConnectionStrings:identity` using the existing Haley adapter format. The sample uses the existing MariaDB host at `host.containers.internal:3307`, database `haley_identity`. Replace `CHANGE_ME` in your deployment configuration.
-3. Set `Haley:Identity:Server:TrustedNetwork` to true for the standalone host only after placing it inside the intended private application network. This is intentional anonymous application API access, not an internet login endpoint.
-4. Assign each application a stable GUID. Configure `Haley:Identity:Server:SessionBindingKeys:<application-guid>:<key-id>` with a random secret of at least 32 characters. Multiple key IDs permit rotation; remove the previous key after callers switch. The application GUID alone is not proof for session issuance, validation or revocation.
-5. For TOTP, create a 32-byte random protection key in the mounted `Keys` directory. A raw 32-byte file or Base64 representation is supported. Set `SecretProtection:ActiveKeyId`, and add a `Keys` entry with matching `KeyId` and `Path`, such as `Keys/identity-2026.key`. Retain old keys for decryption while rotating. Protect this directory and back it up with the database.
-6. `Initialize=true` bootstraps a fresh schema and seed with the existing Haley initializer. It does not ALTER an old Kida schema. Apply the manual migration before upgrading existing Kida.
-7. Run the host. Its local default is `127.0.0.1:7430`. `/health` reports readiness after configured database initialization. Other routes are under `/api/identity`. Applications call it with `AddHaleyIdentity(...UseRemote())`.
+Browser session keys are created automatically in `Management:KeyDirectory` (default `State/AdminKeys`). Preserve that directory and the configured lockout file. Session cookies are HttpOnly, SameSite Strict, fixed expiry, and use CSRF protection. Logout revokes the server-side session; restarting the host or changing the management password hash requires a new login. Browser keys and the database secret-protection key have different purposes.
 
-## Podman Quadlet
+To clear a management login lockout, run `Haley.Identity.Cred reset-lockout State/admin-login-lockout.json` from the host content root, or pass an absolute path. This does not reset a user's account lock. The tool has no database dependency at runtime for these commands.
 
-Publish `HaleyIdentityHost` and build `localhost/haley.identity:0.1.0` with the published `podman.cfile`. Copy `haley-identity.container` to `/etc/containers/systemd/`.
+## Podman
 
-The container joins the existing `dlab-net` and depends on `dlab-maria.service`. Its internal listener is `0.0.0.0:5000`. No host port is published. Other containers on that network use `http://haley-identity:5000/`. A host process or remote machine requires separately arranged private routing; this Quadlet intentionally does not provide public access.
+Publish the host, then build `localhost/haley.identity:0.1.0` with the published `podman.cfile`. Copy `haley-identity.container` to `/etc/containers/systemd/`. It joins `dlab-net`, depends on your existing `dlab-maria.service`, and listens on container port 5000. Containers call `http://haley-identity:5000/`. The Quadlet publishes host loopback `127.0.0.1:7430` for local access or an explicitly configured reverse proxy.
 
-The named volumes are `hi-config` at `/app/target/Config` and `hi-keys` at `/app/target/Keys`. Edit the copied configuration before enabling trusted-network operation and session issuance. The image's initial configuration deliberately contains placeholders. Image upgrades retain existing volume contents, so review new configuration keys when upgrading.
+Persist `hi-config`, `hi-keys`, `hi-state`, and `hi-saml-certs`. The UI is part of the image; there is no wwwroot volume. `identity-admin.config.json` is linked from the Config volume and can change the title/API base path. Existing named volumes preserve their configuration across upgrades; review new keys when changing images.
 
-After editing the Quadlet, run `systemctl daemon-reload`, then `systemctl start haley-identity.service`. The `[Install] WantedBy=multi-user.target` entry supplies the generated unit's boot dependency. Do not run `systemctl enable` on the generated transient unit. Inspect `systemctl status haley-identity.service` and `journalctl -u haley-identity.service` for startup diagnostics.
+Run `systemctl daemon-reload`, then `systemctl start haley-identity.service`. Use `systemctl status` and `journalctl -u haley-identity.service` for startup diagnostics. Quadlet's `[Install]` section handles boot startup; do not enable the generated transient service directly.
 
-The service returns binding/validation failures as 400, missing resources as 404 where applicable, unauthorized session bindings as 401, rate limits as 429, and unexpected failures as 500 with a trace identifier. Passwords, opaque tokens, delivery codes and protection keys must stay out of logs.
+If a TLS reverse proxy is used, set `Haley:Identity:TrustedProxies` to its actual IP addresses so forwarded HTTPS and source addresses are honored. Loopback proxies are trusted by the framework default. Route the admin UI only through your administration boundary. If external providers need public callbacks, expose only the two exact `/identity/federation/...` callback routes, not the trusted `/api/identity` routes.
 
 ## Kida
 
-Existing Kida deployments keep their Service and Admin containers. There is no new mandatory container. Apply [the migration](MIGRATION.md), deploy the updated Kida binaries and shared package, then explicitly grant each client the foundation scopes it needs. Catalog registration describes scopes; it does not grant them. Kida Admin continues to call Kida Service and receives no database access.
+Kida still uses its own Service and Admin containers. Do not start the standalone Haley host against a Kida-owned database. Kida embeds the shared engine, installs shared SQL first and its extension second, and enforces its OAuth client/resource rules. This prototype release assumes the owner recreates databases. No live database is reset by the tooling or by these instructions.

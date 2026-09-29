@@ -429,6 +429,10 @@ FodyWeavers.xsd
 *.msp
 
 # Local Identity build and verification output
+HaleyIdentityHost/wwwroot/admin/
+HaleyIdentityHost/State/
+HaleyIdentityHost/Keys/
+HaleyIdentityHost/SamlCerts/
 **/bin/
 **/obj/
 .vs/
