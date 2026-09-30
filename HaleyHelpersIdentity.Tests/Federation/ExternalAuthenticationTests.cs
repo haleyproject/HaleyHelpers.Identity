@@ -2,7 +2,9 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Haley.Abstractions;
+using Haley.Constants;
 using Haley.Models;
 using Haley.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,6 +29,8 @@ public sealed class ExternalAuthenticationTests : IDisposable
     [InlineData("key")]
     [InlineData("signature")]
     [InlineData("algorithm")]
+    [InlineData("version")]
+    [InlineData("version-string")]
     public async Task InvalidProofNeverCompletesAttempt(string fault)
     {
         var store = Store();
@@ -77,7 +81,7 @@ public sealed class ExternalAuthenticationTests : IDisposable
         var store = Store(); store.AuthoritativeDomains = [];
         using var services = FederationTestServices.Create(store);
         var edge = services.GetRequiredService<IFederationAuthenticationService>();
-        Assert.Single((await edge.DiscoverAsync(new("user@example.com"))).Result!);
+        Assert.Single((await edge.DiscoverAsync(new("user@example.com", SamlAuthenticationEdgeTests.ClientId, "product-api"))).Result!);
         var started = await edge.BeginAsync(Start());
         var completed = await edge.CompleteExternalAsync(new(started.Result!.RelayState, Assertion(started.Result.RequestId)));
         store.AccountStatus = IdentityStatus.Retired;
@@ -116,6 +120,66 @@ public sealed class ExternalAuthenticationTests : IDisposable
         Assert.False(store.Redeemed);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task VersionOneAcceptsOriginalAndExplicitlyVersionedAssertions(bool explicitVersion)
+    {
+        var store = Store();
+        using var services = FederationTestServices.Create(store);
+        var edge = services.GetRequiredService<IFederationAuthenticationService>();
+        var started = await edge.BeginAsync(Start());
+        Assert.Contains("contractVersion=1", started.Result!.AuthorizationUrl);
+        Assert.True((await edge.CompleteExternalAsync(new(started.Result.RelayState,
+            Assertion(started.Result.RequestId, explicitVersion ? "explicit-version" : null)))).Status);
+    }
+
+    [Theory]
+    [InlineData("2")]
+    [InlineData("\"1\"")]
+    [InlineData("null")]
+    public async Task UnsupportedOrMalformedConfiguredVersionsCannotStartOrBeSaved(string version)
+    {
+        var store = Store();
+        var config = JsonNode.Parse(store.Configuration)!.AsObject();
+        config["contractVersion"] = JsonNode.Parse(version);
+        store.Configuration = config.ToJsonString();
+        using var services = FederationTestServices.Create(store);
+        Assert.False((await services.GetRequiredService<IFederationAuthenticationService>().BeginAsync(Start())).Status);
+        Assert.Null(store.CreatedRequest);
+        Assert.False((await services.GetRequiredService<IIdentityProviderAdministrationService>().UpsertProviderAsync(store.ProviderId,
+            ProviderRequest(store.Configuration))).Status);
+    }
+
+    [Fact]
+    public async Task ProviderSaveNormalizesLegacyVersionAndRejectsConflictingDefaults()
+    {
+        var store = Store();
+        using var services = FederationTestServices.Create(store);
+        var admin = services.GetRequiredService<IIdentityProviderAdministrationService>();
+        var config = ProviderRoutingTests.WithPolicy(store.Configuration, defaults: [SamlAuthenticationEdgeTests.ClientId]);
+        var accepted = await admin.UpsertProviderAsync(store.ProviderId, ProviderRequest(config));
+        Assert.True(accepted.Status);
+        Assert.Equal(1, JsonNode.Parse(accepted.Result!.Configuration)!["contractVersion"]!.GetValue<int>());
+        store.Configuration = config;
+        var conflict = await admin.UpsertProviderAsync(null, ProviderRequest(config) with { Code = "another-provider" });
+        Assert.Equal(IdentityErrorCodes.FederationDefaultConflict, conflict.Key);
+        Assert.True((await admin.UpsertProviderAsync(store.ProviderId, ProviderRequest(config))).Status);
+        Assert.True((await admin.UpsertProviderAsync(null, ProviderRequest(config) with { Code = "retired-provider", Status = IdentityRecordStatus.Retired })).Status);
+    }
+
+    [Fact]
+    public async Task DefaultCannotBypassApplicationAllowlist()
+    {
+        var store = Store();
+        using var services = FederationTestServices.Create(store);
+        var config = ProviderRoutingTests.WithPolicy(store.Configuration, allowed: [Guid.NewGuid()], defaults: [SamlAuthenticationEdgeTests.ClientId]);
+        Assert.False((await services.GetRequiredService<IIdentityProviderAdministrationService>().UpsertProviderAsync(store.ProviderId, ProviderRequest(config))).Status);
+    }
+
+    private static UpsertIdentityProviderRequest ProviderRequest(string configuration) => new("corporate", FederationProtocol.SignedCallback,
+        "https://idp.example/issuer", "Corporate", configuration);
+
     private TestFederationDal Store() => new()
     {
         RedirectAllowed = true, Protocol = FederationProtocol.SignedCallback,
@@ -142,6 +206,9 @@ public sealed class ExternalAuthenticationTests : IDisposable
             ["jti"] = Guid.NewGuid().ToString("N"), ["attempt"] = (fault == "attempt" ? Guid.NewGuid() : attempt).ToString("N"),
             ["email"] = "employee@example.com", ["email_verified"] = true, ["name"] = "Employee"
         };
+        if (fault == "version") payload["contractVersion"] = 2;
+        if (fault == "version-string") payload["contractVersion"] = "1";
+        if (fault == "explicit-version") payload["contractVersion"] = 1;
         return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(header, payload));
     }
     public void Dispose() => key.Dispose();

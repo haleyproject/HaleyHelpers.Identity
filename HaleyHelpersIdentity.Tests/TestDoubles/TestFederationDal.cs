@@ -4,9 +4,13 @@ using Haley.Models;
 
 namespace Haley.Tests;
 
-internal sealed class TestFederationDal : IIdentityFederationStore, IIdentityRecoveryAuthorization, IIdentityVerificationMfaPolicy
+internal sealed class TestFederationDal : IIdentityFederationStore, IIdentityRecoveryAuthorization, IIdentityVerificationMfaPolicy, IIdentityFederationPolicy
 {
     public bool RedirectAllowed { get; init; }
+    public bool ResourceAllowed { get; set; } = true;
+    public bool RequireApplicationAllowlist { get; set; }
+    public List<StoredIdentityProvider> AdditionalProviders { get; } = [];
+    public ValueTask<bool> RequiresApplicationAllowlistAsync(Guid providerId, CancellationToken cancellationToken) => ValueTask.FromResult(RequireApplicationAllowlist);
     public CreateFederationAttemptCommand? CreatedRequest { get; private set; }
     public bool Completed { get; private set; }
     public bool Redeemed { get; private set; }
@@ -29,17 +33,18 @@ internal sealed class TestFederationDal : IIdentityFederationStore, IIdentityRec
     private CompleteFederationAttemptCommand? handoff;
     public ValueTask<StoredIdentityProvider?> FindProviderAsync(string code, CancellationToken ct) => ValueTask.FromResult<StoredIdentityProvider?>(
         code == "corporate" ? new(7, ProviderId, code, Protocol, "https://idp.example/issuer", "Corporate",
-            ProviderStatus, Configuration, AuthoritativeDomains, SamlAuthenticationEdgeTests.Now, [], DiscoveryDomains) : null);
+            ProviderStatus, Configuration, AuthoritativeDomains, SamlAuthenticationEdgeTests.Now, [], DiscoveryDomains) : AdditionalProviders.SingleOrDefault(provider => provider.Code == code));
     public async ValueTask<IReadOnlyCollection<IdentityProviderInfo>> ListProvidersAsync(CancellationToken ct)
     {
         var p = (await FindProviderAsync("corporate", ct))!;
-        return [new(p.ProviderId, p.Code, p.Protocol, p.Issuer, p.DisplayName, p.Status, p.Configuration, p.AuthoritativeDomains, p.ModifiedAt, [], p.DiscoveryDomains)];
+        return new[] { p }.Concat(AdditionalProviders).Select(provider => new IdentityProviderInfo(provider.ProviderId, provider.Code, provider.Protocol,
+            provider.Issuer, provider.DisplayName, provider.Status, provider.Configuration, provider.AuthoritativeDomains, provider.ModifiedAt, [], provider.DiscoveryDomains)).ToArray();
     }
     public ValueTask<IdentityProviderInfo?> UpsertProviderAsync(Guid id, UpsertIdentityProviderRequest request, DateTimeOffset now, CancellationToken ct) =>
         ValueTask.FromResult<IdentityProviderInfo?>(new(id, request.Code, request.Protocol, request.Issuer, request.DisplayName, request.Status,
             request.Configuration, request.AuthoritativeDomains ?? [], now, request.SigningCertificates, request.DiscoveryDomains));
     public bool TryNormalizeContext(string? value, out string normalized) { normalized = value?.Trim() ?? string.Empty; return normalized.Length > 0; }
-    public ValueTask<bool> HasActiveResourceAuthorityAsync(Guid id, string context, CancellationToken ct) => ValueTask.FromResult(true);
+    public ValueTask<bool> HasActiveResourceAuthorityAsync(Guid id, string context, CancellationToken ct) => ValueTask.FromResult(ResourceAllowed);
     public ValueTask<bool> IsReturnUriAllowedAsync(Guid id, string context, string uri, CancellationToken ct) =>
         ValueTask.FromResult(RedirectAllowed && id == SamlAuthenticationEdgeTests.ClientId && context == "product-api" && uri == SamlAuthenticationEdgeTests.Callback);
     public ValueTask<bool> CreateFederationAttemptAsync(CreateFederationAttemptCommand command, CancellationToken ct)

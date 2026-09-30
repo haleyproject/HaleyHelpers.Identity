@@ -6,15 +6,33 @@ Haley owns reusable user authentication: passwords, email verification/OTP, MFA,
 
 A provider has a stable `ProviderId` and `Code`, a display label, a protocol and an expected issuer. The display label can be a company name. It is not a routing or trust identifier. Supported protocols are `Saml` and `SignedCallback`; OIDC ceremonies are not implemented.
 
-`DiscoveryDomains` lets an application find candidate providers from an entered email/domain. Multiple providers can match. The application presents the choice, or starts a known provider code directly. Discovery never proves email ownership. `AuthoritativeDomains` separately permits verified email claims from that provider to link an existing account. Without that trust, an existing email account cannot be taken over through a corporate callback. The durable identity key is the provider plus its case-sensitive stable subject, not the company name or a mutable email address.
+`DiscoveryDomains` lets an application find candidate providers from an entered email/domain. Discovery is bound to an application and context, and only offers active providers that the application may use. Multiple providers can match. The application presents the choice, or starts a known provider code directly. Discovery never proves email ownership. `AuthoritativeDomains` separately permits verified email claims from that provider to link an existing account. Without that trust, an existing email account cannot be taken over through a corporate callback. The durable identity key is the provider plus its case-sensitive stable subject, not the company name or a mutable email address.
 
 Optional `allowedApplicationIds` in provider configuration limits callers. An absent or empty list permits any otherwise authorized application in this deployment. In Kida, a provider associated with a tenant requires a nonempty application allowlist; tenant association alone never grants access. It does not create a tenant membership or license.
+
+## Automatic corporate provider selection
+
+In the shared Haley/Kida Federation admin page, configure **Allowed applications**, **Default for applications**, discovery domains, and (for signed callbacks) **Callback contract version**. Application IDs are UUIDs; in Kida they are OAuth client IDs. These settings use the existing provider JSON configuration, with no new tables or migration.
+
+`defaultForApplicationIds` assigns this provider as the fallback for listed applications. A default is not an access grant. If `allowedApplicationIds` is nonempty, every default application must also appear in it. Tenant-associated Kida providers still require explicit application permission. Saving overlapping active defaults is rejected. Concurrent conflicting configurations also fail closed during resolution rather than choosing an arbitrary provider.
+
+Call `DiscoverAsync(new ProviderDiscoveryRequest(emailOrDomain, applicationId, context))` to obtain candidate codes, display names, protocols, and `IsDefault`. The shared facade can infer an omitted application ID from its authenticated/registered application context, but rejects a different supplied application ID. Supply the resource context; the Kida SDK binds both fields from its configured client and audience.
+
+`BeginFederationRequest.ProviderCode` can be empty. `EmailOrDomain` is an optional trailing field. Selection is deterministic:
+
+1. An explicitly selected provider is used only after normal permission checks.
+2. Otherwise, matching discovery domains are considered first.
+3. Multiple matches return `identity.federation_provider_selection_required` (HTTP 409), without creating an attempt. Call discovery and let the user choose; do not retry with the first entry automatically.
+4. With no matching domain, or no email/domain supplied, the application's configured default is used.
+5. With no permitted match or default, begin returns `identity.federation_provider_not_found`. Invalid domain input is rejected without falling back. Conflicting active defaults return `identity.federation_default_conflict` (HTTP 409).
+
+The entered email is a routing hint. It is not forwarded as authenticated identity, and it cannot create an account or session. The provider's signed subject and trusted claims determine the resulting identity.
 
 ## Browser flow
 
 1. The application backend generates a random state and a PKCE verifier (43 to 128 unreserved ASCII characters). Keep both in the application's browser-session state. Send only the SHA-256 base64url challenge to Identity.
-2. Call `IIdentityFederation.BeginAsync` with application GUID, context, provider code, registered return URI, state and challenge. Identity stores the attempt and returns `AuthorizationUrl`.
-3. Redirect the browser to that URL. SAML uses a compressed AuthnRequest and RelayState. SignedCallback uses `attempt` and the configured `callback` URI. The corporate bridge does not receive or choose the application's return URI.
+2. Call `IIdentityFederation.BeginAsync` with application GUID, context, optional provider code/email-domain hint, registered return URI, state and challenge. Identity stores the attempt and returns `AuthorizationUrl`.
+3. Redirect the browser to that URL. SAML uses a compressed AuthnRequest and RelayState. SignedCallback uses `attempt`, the configured `callback` URI, and `contractVersion=1`. The corporate bridge does not receive or choose the application's return URI.
 4. The provider completes interactive authentication and posts its proof to Identity's callback. Identity validates the proof and atomically consumes the attempt. Neither an email address nor the opaque attempt value alone can authenticate a user.
 5. Identity posts a short-lived opaque handoff code and the original state to the stored application return URI. It never sends the assertion, password or a session token in this form. The application's callback must accept a form POST and validate state against the initiating browser session. Account for cross-site POST cookie behavior when choosing that session cookie's SameSite policy.
 6. The application backend redeems the handoff with its original PKCE verifier and application binding. Identity rechecks provider/application authority, account state and MFA. Missing MFA can be retried before expiry without consuming the handoff. Only one successful redemption consumes it and can issue a session.
@@ -31,6 +49,8 @@ Register a provider with protocol `SignedCallback`. Its JSON configuration conta
 | `callbackUrl` | Fixed Identity browser callback. The bridge must allowlist it. |
 | `audience` | Exact audience expected in the signed assertion. |
 | `keys` | Array of `{ "id": "key-id", "pem": "public RSA PEM" }`. Only public keys, at least 2048 bits. |
+| `contractVersion` | Explicit bridge contract version. Currently only integer `1` is supported. An absent setting means version 1. |
+| `defaultForApplicationIds` | Applications for which this provider is the fallback when discovery has no match. Does not grant access. |
 | `maximumAssertionSeconds` | Maximum assertion age/lifetime, 30 to 300 seconds; default 120. |
 | `allowedApplicationIds` | Optional list of application GUIDs. Kida GUIDs are OAuth client IDs. |
 
@@ -38,11 +58,14 @@ The bridge authenticates its user using its own trusted process, preserves the i
 
 - Header: `alg=RS256`, `typ=identity-bridge+jwt`, and a registered `kid`.
 - Required claims: exact configured `iss` and `aud`, stable case-sensitive `sub`, unique `jti`, `iat`, `exp`, and `attempt` as the original 32-character GUID without hyphens. `nbf` is optional and enforced when present.
+- Optional signed `contractVersion`: integer `1`. Omission preserves the original version 1 format; an unknown version, string version, or null is rejected. New integrators should include the claim.
 - Optional claims: `name`, `email`, and boolean `email_verified`. Email linking/verification requires both `email_verified=true` and a matching authoritative domain. Keep the payload minimal.
 - Keep the RSA private key at the bridge. Identity stores only the public key. There is no network key-discovery URL or shared RSA private key in Identity.
 - Form POST `attempt` and `assertion` to `/identity/federation/external/callback` on Haley. Kida's default path is `/api/kida/identity/federation/external/callback`.
 
 Identity enforces the signature, fixed algorithm/type/key, issuer, audience, bounded timestamps, attempt binding and replay protection. It does not accept unsigned JWTs, arbitrary callback URLs or a browser-provided verified email as proof. During key rotation, register old and new public key IDs before switching the bridge, then remove the old key after outstanding attempts have expired.
+
+The JWT contains its own signature; do not send a separate signature or unsigned email field. Contract versions are independent of library/package versions. Future breaking formats require explicit configuration and implementation support; they must not silently reinterpret version 1. Arbitrary response-field mappings are not supported.
 
 ## SAML configuration
 

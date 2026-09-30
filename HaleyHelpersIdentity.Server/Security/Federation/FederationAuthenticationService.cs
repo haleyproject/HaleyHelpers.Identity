@@ -29,7 +29,7 @@ internal sealed class FederationAuthenticationService(
     private const string HandoffPurpose = "haley.identity.federation.handoff.v1";
     public async ValueTask<IFeedback<FederationStart>> BeginAsync(BeginFederationRequest request, CancellationToken cancellationToken = default)
     {
-        if (request.ApplicationId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderCode) ||
+        if (request.ApplicationId == Guid.Empty || request.ProviderCode?.Length > 100 ||
             string.IsNullOrWhiteSpace(request.State) || request.State.Length is < 16 or > 200 || request.State.Any(char.IsControl) ||
             !authorization.TryNormalizeContext(request.Context, out var context) || !TryAbsoluteUri(request.ReturnUri, out var returnUri) ||
             string.IsNullOrWhiteSpace(request.CodeChallenge)) return Fail<FederationStart>(IdentityErrorCodes.InvalidRequest);
@@ -37,14 +37,23 @@ internal sealed class FederationAuthenticationService(
         try { challenge = request.CodeChallenge.Trim().SafeBase64Decode(); }
         catch (FormatException) { return Fail<FederationStart>(IdentityErrorCodes.InvalidRequest); }
         if (challenge.Length != 32) return Fail<FederationStart>(IdentityErrorCodes.InvalidRequest);
-        var provider = await store.FindProviderAsync(request.ProviderCode.Trim().ToLowerInvariant(), cancellationToken).ConfigureAwait(false);
+        if (!await authorization.HasActiveResourceAuthorityAsync(request.ApplicationId, context, cancellationToken).ConfigureAwait(false) ||
+            !await authorization.IsReturnUriAllowedAsync(request.ApplicationId, context, returnUri.AbsoluteUri, cancellationToken).ConfigureAwait(false))
+            return Fail<FederationStart>(IdentityErrorCodes.InvalidClientResource);
+        var providerCode = request.ProviderCode?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(providerCode))
+        {
+            var discovery = await DiscoverAsync(new(request.EmailOrDomain, request.ApplicationId, context), cancellationToken).ConfigureAwait(false);
+            if (!discovery.Status) return Fail<FederationStart>(discovery.Key ?? IdentityErrorCodes.FederationRejected);
+            if (discovery.Result.Count == 0) return Fail<FederationStart>(IdentityErrorCodes.FederationProviderNotFound);
+            if (discovery.Result.Count > 1) return Fail<FederationStart>(IdentityErrorCodes.FederationProviderSelectionRequired);
+            providerCode = discovery.Result.Single().Code;
+        }
+        var provider = await store.FindProviderAsync(providerCode, cancellationToken).ConfigureAwait(false);
         if (provider is null || provider.Status != IdentityRecordStatus.Active ||
             provider.Protocol is not (FederationProtocol.Saml or FederationProtocol.SignedCallback) ||
             !ProviderApplicationPolicy.Allows(provider.Configuration, request.ApplicationId, await policy.RequiresApplicationAllowlistAsync(provider.ProviderId, cancellationToken).ConfigureAwait(false)))
             return Fail<FederationStart>(IdentityErrorCodes.FederationRejected);
-        if (!await authorization.HasActiveResourceAuthorityAsync(request.ApplicationId, context, cancellationToken).ConfigureAwait(false) ||
-            !await authorization.IsReturnUriAllowedAsync(request.ApplicationId, context, returnUri.AbsoluteUri, cancellationToken).ConfigureAwait(false))
-            return Fail<FederationStart>(IdentityErrorCodes.InvalidClientResource);
         var now = clock.UtcNow;
         var expires = now.AddSeconds(Math.Clamp(options.Value.Federation.RequestValiditySeconds, 60, 900));
         var requestId = uuids.NewUuid7();
@@ -62,7 +71,7 @@ internal sealed class FederationAuthenticationService(
             else
             {
                 var config = ExternalProviderConfiguration.Parse(provider.Configuration);
-                var url = config.AuthorizationUrl.AbsoluteUri + (config.AuthorizationUrl.Query.Length > 0 ? "&" : "?") + "attempt=" + requestId.ToString("N") + "&callback=" + Uri.EscapeDataString(config.CallbackUrl.AbsoluteUri);
+                var url = config.AuthorizationUrl.AbsoluteUri + (config.AuthorizationUrl.Query.Length > 0 ? "&" : "?") + "attempt=" + requestId.ToString("N") + "&callback=" + Uri.EscapeDataString(config.CallbackUrl.AbsoluteUri) + "&contractVersion=" + config.ContractVersion;
                 start = new(requestId, config.AuthorizationUrl.AbsoluteUri, string.Empty, requestId.ToString("N"), expires, url, provider.Protocol);
             }
         }
@@ -146,11 +155,30 @@ internal sealed class FederationAuthenticationService(
     {
         var value = request.EmailOrDomain?.Trim().ToLowerInvariant() ?? string.Empty;
         var domain = value.Contains('@') ? value[(value.LastIndexOf('@') + 1)..] : value;
-        if (domain.Length is < 1 or > 253 || Uri.CheckHostName(domain) != UriHostNameType.Dns)
+        if (request.ApplicationId == Guid.Empty || !authorization.TryNormalizeContext(request.Context, out var context) ||
+            value.Length > 320 || value.Any(char.IsControl) || value.Count(character => character == '@') > 1 || value.StartsWith('@') ||
+            (value.Length > 0 && (domain.Length is < 1 or > 253 || Uri.CheckHostName(domain) != UriHostNameType.Dns)))
             return Fail<IReadOnlyCollection<ProviderDiscovery>>(IdentityErrorCodes.InvalidRequest);
+        if (!await authorization.HasActiveResourceAuthorityAsync(request.ApplicationId, context, cancellationToken).ConfigureAwait(false))
+            return Fail<IReadOnlyCollection<ProviderDiscovery>>(IdentityErrorCodes.InvalidClientResource);
         var providers = await store.ListProvidersAsync(cancellationToken).ConfigureAwait(false);
-        return Ok<IReadOnlyCollection<ProviderDiscovery>>(providers.Where(provider => provider.Status == IdentityRecordStatus.Active &&
-            (provider.DiscoveryDomains ?? []).Contains(domain, StringComparer.Ordinal)).Select(provider => new ProviderDiscovery(provider.Code, provider.DisplayName, provider.Protocol)).ToArray());
+        var matches = new List<ProviderDiscovery>();
+        var defaults = new List<ProviderDiscovery>();
+        foreach (var provider in providers.OrderBy(provider => provider.Code, StringComparer.Ordinal))
+        {
+            if (provider.Status != IdentityRecordStatus.Active || provider.Protocol is not (FederationProtocol.Saml or FederationProtocol.SignedCallback) ||
+                !ProviderApplicationPolicy.Allows(provider.Configuration, request.ApplicationId,
+                    await policy.RequiresApplicationAllowlistAsync(provider.ProviderId, cancellationToken).ConfigureAwait(false))) continue;
+            var isDefault = ProviderApplicationPolicy.DefaultApplications(provider.Configuration).Contains(request.ApplicationId);
+            var candidate = new ProviderDiscovery(provider.Code, provider.DisplayName, provider.Protocol, isDefault);
+            if (domain.Length > 0 && (provider.DiscoveryDomains ?? []).Contains(domain, StringComparer.Ordinal)) matches.Add(candidate);
+            if (isDefault) defaults.Add(candidate);
+        }
+        if (matches.Count > 0) return Ok<IReadOnlyCollection<ProviderDiscovery>>(matches);
+        // Concurrent administrative writes must never make an arbitrary provider the default.
+        return defaults.Count > 1
+            ? Fail<IReadOnlyCollection<ProviderDiscovery>>(IdentityErrorCodes.FederationDefaultConflict)
+            : Ok<IReadOnlyCollection<ProviderDiscovery>>(defaults);
     }
 
     private async ValueTask<IFeedback<FederationHandoff>> CompleteProofAsync(StoredFederationAttempt stored,
@@ -217,13 +245,20 @@ internal sealed class FederationAuthenticationService(
         return false;
     }
 
-    private static IFeedback<T> Ok<T>(T value) => new Feedback<T>(true, "SAML operation completed.", value)
+    private static IFeedback<T> Ok<T>(T value) => new Feedback<T>(true, "Federation operation completed.", value)
     {
         Source = Source
     };
-    private static IFeedback<T> Fail<T>(string code) => new Feedback<T>(false, "SAML operation failed.", default!)
+    private static IFeedback<T> Fail<T>(string code) => new Feedback<T>(false, code switch
+    {
+        IdentityErrorCodes.FederationProviderNotFound => "No permitted corporate provider matches this application.",
+        IdentityErrorCodes.FederationProviderSelectionRequired => "Multiple corporate providers match. Discover the available providers and select one.",
+        IdentityErrorCodes.FederationDefaultConflict => "More than one default corporate provider is configured for this application.",
+        _ => "Federation operation failed."
+    }, default!)
     {
         Source = Source,
-        Key = code
+        Key = code,
+        Code = code is IdentityErrorCodes.FederationProviderSelectionRequired or IdentityErrorCodes.FederationDefaultConflict ? 409 : 400
     };
 }

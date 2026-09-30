@@ -4,7 +4,14 @@ internal sealed class IdentityFederationService(IFederationAuthenticationService
     FederationHandoffService handoffs, IdentityService identity, IIdentityApplicationContext application) : IIdentityFederation
 {
     public ValueTask<IFeedback<IReadOnlyCollection<ProviderDiscovery>>> DiscoverAsync(ProviderDiscoveryRequest request, CancellationToken cancellationToken = default) =>
-        authentication.DiscoverAsync(request, cancellationToken);
+        (Matches(request.ApplicationId == Guid.Empty ? application.ApplicationId : request.ApplicationId) &&
+            (application.OwnerContext is null || string.IsNullOrEmpty(request.Context) || application.OwnerContext == request.Context))
+        ? authentication.DiscoverAsync(request with
+        {
+            ApplicationId = application.ApplicationId,
+            Context = string.IsNullOrEmpty(request.Context) ? application.OwnerContext ?? string.Empty : request.Context
+        }, cancellationToken)
+        : Rejected<IReadOnlyCollection<ProviderDiscovery>>();
 
     public ValueTask<IFeedback<FederationStart>> BeginAsync(BeginFederationRequest request, CancellationToken cancellationToken = default) =>
         (Matches(request.ApplicationId) && (application.OwnerContext is null || application.OwnerContext == request.Context)) ? authentication.BeginAsync(request, cancellationToken) : Rejected<FederationStart>();

@@ -33,6 +33,9 @@ public static class IdentityErrorCodes
     public const string MfaRequired = "identity.mfa_required";
     public const string MfaInvalid = "identity.mfa_invalid";
     public const string FederationRejected = "identity.federation_rejected";
+    public const string FederationProviderNotFound = "identity.federation_provider_not_found";
+    public const string FederationProviderSelectionRequired = "identity.federation_provider_selection_required";
+    public const string FederationDefaultConflict = "identity.federation_default_conflict";
     public const string SamlCertificateInvalid = "identity.saml_certificate_invalid";
     public const string SamlCertificateConflict = "identity.saml_certificate_conflict";
     public const string SamlCertificateMissing = "identity.saml_certificate_missing";

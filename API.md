@@ -79,3 +79,5 @@ Expiry, attempt exhaustion, replay, application/context mismatch, changed destin
 ## Corporate authentication and management
 
 The reusable `IIdentityFederation` contract and full request/response flow are described in [FEDERATION.md](FEDERATION.md). The standalone host also serves `/admin/` and its password/cookie-protected `/admin/api` endpoints. These are host management routes; they are not part of the portable client API.
+
+Corporate begin accepts an empty `ProviderCode` and optional `EmailOrDomain`. Discovery accepts `EmailOrDomain`, `ApplicationId`, and `Context`, and returns only permitted candidates with `IsDefault`. Applications should handle HTTP 409 / `identity.federation_provider_selection_required` by displaying discovery results. Signed callbacks use contract version 1; existing assertions that omit the version remain valid. See [provider selection and contract details](FEDERATION.md).

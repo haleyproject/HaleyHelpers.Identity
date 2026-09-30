@@ -15,7 +15,7 @@ internal static class ExternalAssertionValidator
             RequireSignedTokens = true, RequireExpirationTime = true,
             ValidateIssuerSigningKey = true, IssuerSigningKeys = provider.LoadKeys(),
             TryAllIssuerSigningKeys = false, ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
-            ValidTypes = ["identity-bridge+jwt"],
+            ValidTypes = [SignedCallbackContract.TokenType],
             ValidateIssuer = true, ValidIssuer = attempt.ProviderIssuer,
             ValidateAudience = true, ValidAudience = provider.Audience,
             ValidateLifetime = true, ClockSkew = TimeSpan.Zero,
@@ -31,6 +31,11 @@ internal static class ExternalAssertionValidator
             seconds > now.ToUnixTimeSeconds() || seconds < now.AddSeconds(-provider.MaximumAssertionSeconds).ToUnixTimeSeconds() ||
             token.ValidTo > DateTimeOffset.FromUnixTimeSeconds(seconds).AddSeconds(provider.MaximumAssertionSeconds).UtcDateTime)
             throw new SecurityTokenValidationException("The provider assertion was rejected.");
+        // An absent version is the original v1 contract. An explicit version must be a matching JSON integer.
+        if (token.Payload.TryGetValue("contractVersion", out var contractVersion) &&
+            !((contractVersion is int intVersion && intVersion == provider.ContractVersion) ||
+              (contractVersion is long longVersion && longVersion == provider.ContractVersion)))
+            throw new SecurityTokenValidationException("The signed callback contract version was rejected.");
         return token;
     }
 }

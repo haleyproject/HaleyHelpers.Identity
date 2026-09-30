@@ -28,11 +28,11 @@
   let certificateName = '';
 
   function emptyProvider() {
-    return { code: '', protocol: 'Saml' as 'Saml' | 'SignedCallback', issuer: '', displayName: '', configuration: '{\n  "ssoUrl": "https://idp.example.com/saml/sso",\n  "acsUrl": "https://identity.example.com/identity/federation/saml/acs",\n  "spEntityId": "https://auth.example.com",\n  "allowedApplicationIds": [],\n  "emailClaim": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",\n  "displayNameClaim": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",\n  "validation": {\n    "validateSignature": true,\n    "validateIssuer": true,\n    "validateAudience": true,\n    "validateLifetime": true,\n    "validateDestination": true,\n    "validateRecipient": true,\n    "validateInResponseTo": true,\n    "validateReplay": true,\n    "clockSkewSeconds": 120,\n    "allowUnsafeValidation": false\n  }\n}'.replace('https://identity.example.com/identity/federation/saml/acs', adminApi.extended ? 'https://kida.example.com/api/kida/identity/federation/saml/acs' : new URL('../identity/federation/saml/acs', window.location.href).href), domains: '', discoveryDomains: '', tenantId: '', status: RecordStatus.Active, signingCertificates: [] as string[] };
+    return { code: '', protocol: 'Saml' as 'Saml' | 'SignedCallback', issuer: '', displayName: '', configuration: '{\n  "ssoUrl": "https://idp.example.com/saml/sso",\n  "acsUrl": "https://identity.example.com/identity/federation/saml/acs",\n  "spEntityId": "https://auth.example.com",\n  "emailClaim": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",\n  "displayNameClaim": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",\n  "validation": {\n    "validateSignature": true,\n    "validateIssuer": true,\n    "validateAudience": true,\n    "validateLifetime": true,\n    "validateDestination": true,\n    "validateRecipient": true,\n    "validateInResponseTo": true,\n    "validateReplay": true,\n    "clockSkewSeconds": 120,\n    "allowUnsafeValidation": false\n  }\n}'.replace('https://identity.example.com/identity/federation/saml/acs', adminApi.extended ? 'https://kida.example.com/api/kida/identity/federation/saml/acs' : new URL('../identity/federation/saml/acs', window.location.href).href), domains: '', discoveryDomains: '', allowedApplications: '', defaultApplications: '', contractVersion: 1, tenantId: '', status: RecordStatus.Active, signingCertificates: [] as string[] };
   }
 
   function selectProtocol() {
-    if (provider.protocol === 'SignedCallback') provider.configuration = JSON.stringify({ authorizationUrl: 'https://corporate.example/login', callbackUrl: adminApi.extended ? 'https://kida.example.com/api/kida/identity/federation/external/callback' : new URL('../identity/federation/external/callback', window.location.href).href, audience: 'identity-bridge', keys: [{ id: 'corporate-2026', pem: '-----BEGIN PUBLIC KEY-----\nREPLACE_WITH_PUBLIC_RSA_KEY\n-----END PUBLIC KEY-----' }], allowedApplicationIds: [], maximumAssertionSeconds: 120 }, null, 2);
+    if (provider.protocol === 'SignedCallback') provider.configuration = JSON.stringify({ authorizationUrl: 'https://corporate.example/login', callbackUrl: adminApi.extended ? 'https://kida.example.com/api/kida/identity/federation/external/callback' : new URL('../identity/federation/external/callback', window.location.href).href, audience: 'identity-bridge', keys: [{ id: 'corporate-2026', pem: '-----BEGIN PUBLIC KEY-----\nREPLACE_WITH_PUBLIC_RSA_KEY\n-----END PUBLIC KEY-----' }], maximumAssertionSeconds: 120 }, null, 2);
     else provider.configuration = emptyProvider().configuration;
   }
 
@@ -69,10 +69,16 @@
 
   function edit(item: IdentityProvider) {
     const configuration = JSON.parse(item.configuration) as Record<string, unknown>;
+    const allowedApplications = ((configuration.allowedApplicationIds ?? []) as string[]).join('\n');
+    const defaultApplications = ((configuration.defaultForApplicationIds ?? []) as string[]).join('\n');
+    const contractVersion = (configuration.contractVersion ?? 1) as number;
     delete configuration.signingCertificates;
+    delete configuration.allowedApplicationIds;
+    delete configuration.defaultForApplicationIds;
+    delete configuration.contractVersion;
     editingId = item.providerId;
     provider = { code: item.code, protocol: item.protocol, issuer: item.issuer, displayName: item.displayName,
-      configuration: JSON.stringify(configuration, null, 2), domains: item.authoritativeDomains.join('\n'), discoveryDomains: (item.discoveryDomains ?? []).join('\n'), tenantId: item.tenantId ?? '', status: item.status,
+      configuration: JSON.stringify(configuration, null, 2), allowedApplications, defaultApplications, contractVersion, domains: item.authoritativeDomains.join('\n'), discoveryDomains: (item.discoveryDomains ?? []).join('\n'), tenantId: item.tenantId ?? '', status: item.status,
       signingCertificates: item.signingCertificates ?? [] };
     tab = 'register';
   }
@@ -123,10 +129,14 @@
   async function saveProvider() {
     saving = true; error = ''; notice = '';
     try {
-      JSON.parse(provider.configuration);
+      const configuration = JSON.parse(provider.configuration) as Record<string, unknown>;
+      if (!configuration || Array.isArray(configuration) || typeof configuration !== 'object') throw new Error('Provider configuration must be a JSON object.');
+      configuration.allowedApplicationIds = [...new Set(provider.allowedApplications.split(/[\s,]+/).filter(Boolean))];
+      configuration.defaultForApplicationIds = [...new Set(provider.defaultApplications.split(/[\s,]+/).filter(Boolean))];
+      if (provider.protocol === 'SignedCallback') configuration.contractVersion = provider.contractVersion;
       await adminApi.saveIdentityProvider(editingId, {
         code: provider.code, protocol: provider.protocol, issuer: provider.issuer, displayName: provider.displayName,
-        configuration: provider.configuration,
+        configuration: JSON.stringify(configuration),
         authoritativeDomains: provider.domains.split(/[\s,]+/).map(value => value.trim()).filter(Boolean),
         tenantId: adminApi.extended ? provider.tenantId || null : null, status: provider.status,
         discoveryDomains: provider.discoveryDomains.split(/[\s,]+/).map(value => value.trim()).filter(Boolean),
@@ -218,6 +228,13 @@
       <label>Display name<input bind:value={provider.displayName} /></label>
       <label>Issuer<input bind:value={provider.issuer} placeholder="https://sts.windows.net/.../" /></label>
       <label>Discovery domains <span class="optional">optional</span><textarea rows="2" bind:value={provider.discoveryDomains} placeholder="example.com"></textarea></label>
+      <div class="split">
+        <label>Allowed applications <span class="optional">application UUIDs, optional</span><textarea rows="2" bind:value={provider.allowedApplications} placeholder="One application UUID per line"></textarea></label>
+        <label>Default for applications <span class="optional">application UUIDs, optional</span><textarea rows="2" bind:value={provider.defaultApplications} placeholder="One application UUID per line"></textarea></label>
+      </div>
+      <p class="form-note">An empty allowed-applications list permits any otherwise authorized application.{#if adminApi.extended} Tenant providers require an explicit allowed-applications list.{/if}</p>
+      <p class="form-note">Discovery uses the entered email domain first. The application default is used when no domain matches, or when no email is supplied. Multiple domain matches require a provider choice. Each application can have one active default, and that application must be allowed to use this provider. A default does not grant access.</p>
+      {#if provider.protocol === 'SignedCallback'}<label>Callback contract version<select bind:value={provider.contractVersion}><option value={1}>Version 1</option></select></label><p class="form-note">Existing version 1 integrators remain compatible. Future contract versions require an explicit configuration change.</p>{/if}
       <label>Trusted email-linking domains<textarea rows="2" bind:value={provider.domains} placeholder="example.com"></textarea></label>
       <div class="split">{#if adminApi.extended}<label>Tenant UUID <span class="optional">optional</span><input bind:value={provider.tenantId} /></label>{/if}<label>Status<select bind:value={provider.status}><option value={RecordStatus.Active}>Active</option><option value={RecordStatus.Retired}>Retired</option></select></label></div>
       {#if provider.protocol === 'Saml'}
@@ -235,7 +252,7 @@
         </fieldset>
       {/if}
       <label>Provider configuration<textarea rows="12" bind:value={provider.configuration}></textarea></label>
-      <p class="form-note">SAML uses <code>ssoUrl</code>, <code>acsUrl</code>, <code>spEntityId</code> and selected public certificates. Signed callbacks use <code>authorizationUrl</code>, <code>callbackUrl</code>, <code>audience</code> and named public RSA keys. Discovery does not grant email trust. Optional <code>allowedApplicationIds</code> restricts which applications may use this provider. Signature, lifetime, request binding and replay checks are mandatory.</p>
+      <p class="form-note">SAML uses <code>ssoUrl</code>, <code>acsUrl</code>, <code>spEntityId</code> and selected public certificates. Signed callbacks use <code>authorizationUrl</code>, <code>callbackUrl</code>, <code>audience</code> and named public RSA keys. Discovery does not grant email trust. Signature, lifetime, request binding and replay checks are mandatory.</p>
       <div class="modal-actions"><button class="quiet" onclick={() => { editingId = null; provider = emptyProvider(); }}>Clear</button><button class="primary" disabled={saving || (provider.protocol === 'Saml' && provider.signingCertificates.length === 0)} onclick={saveProvider}>{saving ? 'Saving…' : 'Save provider'}</button></div>
     </article>
   {:else if tab === 'certificates'}

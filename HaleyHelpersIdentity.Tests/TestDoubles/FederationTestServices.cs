@@ -16,6 +16,7 @@ internal static class FederationTestServices
         services.AddSingleton<IIdentityFederationStore>(store);
         services.AddSingleton<IIdentityRecoveryAuthorization>(store);
         services.AddSingleton<IIdentityVerificationMfaPolicy>(store);
+        services.AddSingleton<IIdentityFederationPolicy>(store);
         services.AddSingleton<IIdentityClock>(clock ?? new SamlFixedClock());
         services.AddSingleton<IIdentityUuidGenerator, SamlFixedUuidGenerator>();
         services.AddSingleton<ISecretEnvelopeProtector>(new AesGcmSecretProtector([new SecretProtectionKey("test", new byte[32], true)]));

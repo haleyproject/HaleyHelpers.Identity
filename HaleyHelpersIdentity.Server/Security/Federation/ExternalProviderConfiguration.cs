@@ -11,11 +11,15 @@ internal sealed class ExternalProviderConfiguration
     public required string Audience { get; init; }
     public required IReadOnlyDictionary<string, string> PublicKeys { get; init; }
     public int MaximumAssertionSeconds { get; init; } = 120;
+    public int ContractVersion { get; init; } = SignedCallbackContract.Version1;
 
     public static ExternalProviderConfiguration Parse(string json)
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
+        var version = root.TryGetProperty("contractVersion", out var contractVersion) ? contractVersion.GetInt32() : SignedCallbackContract.Version1;
+        if (version != SignedCallbackContract.Version1)
+            throw new InvalidOperationException("Only signed callback contract version 1 is supported.");
         var keys = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var key in root.GetProperty("keys").EnumerateArray())
         {
@@ -34,7 +38,7 @@ internal sealed class ExternalProviderConfiguration
         return new()
         {
             AuthorizationUrl = Absolute(root, "authorizationUrl"), CallbackUrl = Absolute(root, "callbackUrl"),
-            Audience = Required(root, "audience"), PublicKeys = keys, MaximumAssertionSeconds = maximum
+            Audience = Required(root, "audience"), PublicKeys = keys, MaximumAssertionSeconds = maximum, ContractVersion = version
         };
     }
 

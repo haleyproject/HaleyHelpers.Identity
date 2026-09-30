@@ -25,7 +25,11 @@ public sealed class FederationDatabaseTests
         await Register(database, application, key, true);
         using var scope = database.Scope(application);
         var federation = scope.ServiceProvider.GetRequiredService<IIdentityFederation>();
-        var attempt = await federation.BeginAsync(Start(application));
+        var candidates = await federation.DiscoverAsync(new(Context: "haley.identity"));
+        Assert.True(candidates.Status, candidates.Message);
+        Assert.True(Assert.Single(candidates.Result!).IsDefault);
+        Assert.False((await federation.DiscoverAsync(new("example.com", Guid.NewGuid(), "haley.identity"))).Status);
+        var attempt = await federation.BeginAsync(Start(application) with { ProviderCode = "", EmailOrDomain = "user@unmatched.example" });
         Assert.True(attempt.Status, attempt.Message);
         var completed = await federation.CompleteExternalAsync(new(attempt.Result!.RelayState,
             Sign(key, attempt.Result.RequestId, database.Clock.UtcNow), application));
@@ -58,7 +62,7 @@ public sealed class FederationDatabaseTests
         Assert.True(existing.Status);
         await database.SqlAsync("UPDATE contact_method SET verified_at=UTC_TIMESTAMP(6) WHERE normalized=@email;", ("email", "user@example.com"));
         var federation = scope.ServiceProvider.GetRequiredService<IIdentityFederation>();
-        Assert.Single((await federation.DiscoverAsync(new("user@example.com"))).Result!);
+        Assert.Single((await federation.DiscoverAsync(new("user@example.com", application, "haley.identity"))).Result!);
         var attempt = await federation.BeginAsync(Start(application));
         var completed = await federation.CompleteExternalAsync(new(attempt.Result!.RelayState,
             Sign(key, attempt.Result.RequestId, database.Clock.UtcNow), application));
@@ -99,7 +103,7 @@ public sealed class FederationDatabaseTests
             {
                 authorizationUrl = "https://corporate.example/login", callbackUrl = "https://identity.example/identity/federation/external/callback",
                 audience = "test-identity", keys = new[] { new { id = "current", pem = key.ExportSubjectPublicKeyInfoPem() } },
-                allowedApplicationIds = new[] { application.ToString("D") }, maximumAssertionSeconds = 120
+                allowedApplicationIds = new[] { application.ToString("D") }, defaultForApplicationIds = new[] { application.ToString("D") }, maximumAssertionSeconds = 120
             }), authoritative ? ["example.com"] : [], IdentityRecordStatus.Active, [], ["example.com"]));
         Assert.True(result.Status, result.Message);
     }
@@ -110,7 +114,7 @@ public sealed class FederationDatabaseTests
         { ["typ"] = "identity-bridge+jwt" };
         var payload = new JwtPayload("https://corporate.example", "test-identity", null, now.UtcDateTime, now.AddSeconds(90).UtcDateTime, now.UtcDateTime)
         {
-            ["sub"] = "stable-corporate-subject", ["jti"] = Guid.NewGuid().ToString("N"), ["attempt"] = attempt.ToString("N"),
+            ["sub"] = "stable-corporate-subject", ["jti"] = Guid.NewGuid().ToString("N"), ["attempt"] = attempt.ToString("N"), ["contractVersion"] = 1,
             ["email"] = "user@example.com", ["email_verified"] = true, ["name"] = "Corporate User"
         };
         return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(header, payload));

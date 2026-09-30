@@ -30,8 +30,14 @@ internal sealed class IdentityProviderAdministrationService(
         {
             var config = JsonNode.Parse(request.Configuration) as JsonObject ?? new JsonObject();
             if (config.ContainsKey("allowedClientIds")) return Failure<IdentityProviderInfo>(IdentityErrorCodes.InvalidRequest);
-            if (config.TryGetPropertyValue("allowedApplicationIds", out var applications) && (applications is not JsonArray ids || ids.Any(id => !Guid.TryParse(id?.GetValue<string>(), out var value) || value == Guid.Empty)))
-                return Failure<IdentityProviderInfo>(IdentityErrorCodes.InvalidRequest);
+            var defaults = ProviderApplicationPolicy.DefaultApplications(config.ToJsonString());
+            if (status == IdentityRecordStatus.Active && defaults.Count > 0)
+            {
+                var existing = await store.ListProvidersAsync(cancellationToken).ConfigureAwait(false);
+                if (existing.Any(provider => provider.ProviderId != providerId && provider.Status == IdentityRecordStatus.Active &&
+                    ProviderApplicationPolicy.DefaultApplications(provider.Configuration).Overlaps(defaults)))
+                    return Failure<IdentityProviderInfo>(IdentityErrorCodes.FederationDefaultConflict);
+            }
             if (config.ContainsKey("signingCertificates"))
                 return Failure<IdentityProviderInfo>(IdentityErrorCodes.SamlCertificateInvalid);
             if (request.Protocol == FederationProtocol.Saml)
@@ -47,7 +53,8 @@ internal sealed class IdentityProviderAdministrationService(
             {
                 if (request.Protocol != FederationProtocol.SignedCallback)
                     return Failure<IdentityProviderInfo>(IdentityErrorCodes.InvalidRequest);
-                _ = ExternalProviderConfiguration.Parse(config.ToJsonString());
+                var external = ExternalProviderConfiguration.Parse(config.ToJsonString());
+                config["contractVersion"] = external.ContractVersion;
                 if (request.SigningCertificates?.Count > 0)
                     return Failure<IdentityProviderInfo>(IdentityErrorCodes.SamlCertificateInvalid);
                 certificateNames = [];
@@ -95,9 +102,11 @@ internal sealed class IdentityProviderAdministrationService(
         return result.Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static IFeedback<T> Failure<T>(string key) => new Feedback<T>(false, "Identity provider request was rejected.", default!)
+    private static IFeedback<T> Failure<T>(string key) => new Feedback<T>(false,
+        key == IdentityErrorCodes.FederationDefaultConflict ? "Another active provider is already the default for one of these applications." : "Identity provider request was rejected.", default!)
     {
         Source = "Haley.Identity.Federation",
-        Key = key
+        Key = key,
+        Code = key == IdentityErrorCodes.FederationDefaultConflict ? 409 : 400
     };
 }
