@@ -1,12 +1,45 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-<PropertyGroup><AssemblyName>Haley.Identity.Host</AssemblyName><PackageId>Haley.Identity.Host</PackageId><IsPackable>false</IsPackable></PropertyGroup>
-<ItemGroup><ProjectReference Include="../HaleyHelpersIdentity.Server/HaleyHelpersIdentity.Server.csproj" /></ItemGroup>
-<ItemGroup><Content Remove="wwwroot/admin/**/*" /></ItemGroup>
+  <PropertyGroup>
+    <AssemblyName>Haley.Identity.Host</AssemblyName>
+    <PackageId>Haley.Identity.Host</PackageId>
+    <IsPackable>false</IsPackable>
+    <IdentityAdminRoot>$(MSBuildProjectDirectory)/../HaleyIdentityAdmin.Web</IdentityAdminRoot>
+    <UserSecretsId>ebf660ef-2952-46b8-9733-36d02045d53e</UserSecretsId>
+  </PropertyGroup>
 
-<ItemGroup><None Update="*.container;podman.cfile" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
-  <Target Name="BuildIdentityAdminForPublish" AfterTargets="ComputeFilesToPublish">
-    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/../HaleyIdentityAdmin.Web" Command="npm ci --no-audit --no-fund" Condition="'$(SkipIdentityAdminBuild)' != 'true'" />
-    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/../HaleyIdentityAdmin.Web" Command="npm run build" Condition="'$(SkipIdentityAdminBuild)' != 'true'" />
+  <ItemGroup>
+    <ProjectReference Include="../HaleyHelpersIdentity.Server/HaleyHelpersIdentity.Server.csproj" />
+    <ProjectReference Include="../HaleyIdentity.Cred/HaleyIdentity.Cred.csproj" />
+    <!-- Local runs use appsettings.json. Publish installs deploy.json under that name. -->
+    <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
+    <!-- Vite owns these files. Publish adds them explicitly after the frontend build. -->
+    <Content Remove="wwwroot/admin/**/*;wwwroot/.gitkeep" />
+    <None Remove="wwwroot/admin/**/*" />
+    <None Include="wwwroot/admin/**/*" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <Folder Include="wwwroot/" />
+    <None Update="*.container;podman.cfile" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Show the shared frontend sources in both solutions without another host project. -->
+    <None Include="../HaleyIdentityAdmin.Web/src/**/*" Link="AdminConsole/src/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <None Include="../HaleyIdentityAdmin.Web/public/**/*" Link="AdminConsole/public/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <None Include="../HaleyIdentityAdmin.Web/package.json;../HaleyIdentityAdmin.Web/package-lock.json;../HaleyIdentityAdmin.Web/vite.config.ts;../HaleyIdentityAdmin.Web/tsconfig.json;../HaleyIdentityAdmin.Web/index.html" Link="AdminConsole/%(Filename)%(Extension)" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <IdentityAdminSource Include="$(IdentityAdminRoot)/src/**/*;$(IdentityAdminRoot)/public/**/*;$(IdentityAdminRoot)/package.json;$(IdentityAdminRoot)/package-lock.json;$(IdentityAdminRoot)/vite.config.ts;$(IdentityAdminRoot)/tsconfig.json;$(IdentityAdminRoot)/index.html" />
+    <UpToDateCheckInput Include="@(IdentityAdminSource)" />
+    <UpToDateCheckOutput Include="$(MSBuildProjectDirectory)/wwwroot/admin/index.html" />
+  </ItemGroup>
+
+  <Target Name="RestoreIdentityAdmin" Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipIdentityAdminBuild)' != 'true'" Inputs="$(IdentityAdminRoot)/package.json;$(IdentityAdminRoot)/package-lock.json" Outputs="$(IdentityAdminRoot)/node_modules/.package-lock.json">
+    <Exec WorkingDirectory="$(IdentityAdminRoot)" Command="npm ci --no-audit --no-fund" />
+  </Target>
+
+  <Target Name="BuildIdentityAdmin" BeforeTargets="PrepareForBuild" DependsOnTargets="RestoreIdentityAdmin" Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipIdentityAdminBuild)' != 'true'" Inputs="@(IdentityAdminSource);$(IdentityAdminRoot)/node_modules/.package-lock.json;$(MSBuildProjectFullPath)" Outputs="$(MSBuildProjectDirectory)/wwwroot/admin/index.html">
+    <Exec WorkingDirectory="$(IdentityAdminRoot)" Command="npm run build" />
+  </Target>
+
+  <Target Name="BuildIdentityAdminForPublish" AfterTargets="ComputeFilesToPublish" DependsOnTargets="BuildIdentityAdmin">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/admin/index.html')" Text="The admin UI is missing. Build with Node/npm installed and without SkipIdentityAdminBuild=true before publishing." />
     <ItemGroup>
       <IdentityAdminDist Include="$(MSBuildProjectDirectory)/wwwroot/admin/**/*" />
       <ResolvedFileToPublish Include="@(IdentityAdminDist->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">

@@ -83,15 +83,33 @@ public static class IdentityHosting
         app.UseAuthorization();
         app.UseAntiforgery();
         app.UseRateLimiter();
-        app.UseDefaultFiles();
-        app.UseStaticFiles();
+        ConfigureAdminConsole(app);
         app.MapIdentityManagementSessions();
         app.MapIdentityManagementEndpoints();
         app.MapIdentityFederationBrowserEndpoints();
-        app.MapGet("/", () => Results.Redirect("admin/"));
-        app.MapGet("/admin", () => Results.Redirect("admin/"));
-        app.MapFallbackToFile("/admin/{*path:nonfile}", "admin/index.html");
         app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
         app.MapHaleyIdentityEndpoints();
+    }
+
+    public static void ConfigureAdminConsole(WebApplication app)
+    {
+        app.Use(async (context, next) =>
+        {
+            // Endpoint routing treats /admin and /admin/ as the same route. Normalize only
+            // the slashless request so /admin/ can serve its page without another redirect.
+            if (context.Request.Path == "/admin" &&
+                (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)))
+            {
+                // A relative location preserves a public prefix stripped by a reverse proxy.
+                context.Response.Redirect($"admin/{context.Request.QueryString}");
+                return;
+            }
+
+            await next();
+        });
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
+        app.MapGet("/", () => Results.Redirect("admin/"));
+        app.MapFallbackToFile("/admin/{*path:nonfile}", "admin/index.html");
     }
 }

@@ -1,1 +1,5 @@
-{"title":"Identity Administration","apiBasePath":"api"}
+{
+  "title": "Identity Administration",
+  "basePath": "/admin/",
+  "apiBasePath": "api"
+}

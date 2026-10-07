@@ -3,10 +3,12 @@
     "HaleyIdentityHost": {
       "commandName": "Project",
       "launchBrowser": true,
+      "launchUrl": "admin/",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Haley__Identity__Server__TrustedNetwork": "true"
       },
-      "applicationUrl": "https://localhost:58749;http://localhost:58750"
+      "applicationUrl": "http://127.0.0.1:7430"
     }
   }
 }

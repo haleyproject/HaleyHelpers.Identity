@@ -5,16 +5,26 @@ namespace Haley.Tools;
 
 public static class IdentityCredentialCli
 {
+    public static bool IsCredentialCommand(string[] args) =>
+        args.Length > 0 && args[0].ToLowerInvariant() is
+            "hash-admin-password" or "hash-password" or
+            "generate-secret-protection-key" or "reset-lockout" or
+            "help" or "--help" or "-h";
+
     public static int Run(string[] args)
     {
         const string tool = "Haley.Identity.Cred";
         const string section = "Haley:Identity:Management";
         try
         {
-            if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
+            if (args.Length == 0 || args[0].ToLowerInvariant() is "help" or "--help" or "-h")
             {
                 Console.WriteLine("""
                     Haley.Identity.Cred: offline identity deployment credentials
+
+                    Run directly with Haley.Identity.Cred <command>, or through the host:
+                      dotnet Haley.Identity.Host.dll <command>
+                    Credential commands exit before starting the web server or database setup.
 
                     hash-admin-password
                       Read a password without echoing, confirm it, and print its ASP.NET

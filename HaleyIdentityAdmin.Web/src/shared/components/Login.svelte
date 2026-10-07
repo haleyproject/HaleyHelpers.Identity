@@ -58,7 +58,7 @@
       <div class="setup-callout" role="status">
         <strong>One-time setup required</strong>
         <p>Generate a management password hash with the credential tool, then set <code>{passwordSetting}</code> in the host configuration.</p>
-        <code class="command">Kida.Service.Host.exe hash-admin-password</code>
+        <code class="command">{adminApi.extended ? 'Kida.Service.Host.exe' : 'dotnet Haley.Identity.Host.dll'} hash-admin-password</code>
       </div>
     {/if}
 

@@ -10,12 +10,20 @@ Reusable account storage and identity operations for .NET 8 applications. The sa
 | HaleyHelpersIdentity.Server | Shared account, password, login protection, TOTP, recovery-code, verification/recovery, session and MariaDB engine; shared HTTP endpoints |
 | HaleyIdentityHost | Private ASP.NET Core host with a compact Identity/Federation admin UI and password-based management sessions |
 | HaleyIdentityAdmin.Web | Shared Kida-derived Svelte components; Haley branding and only Identity/Federation navigation |
-| HaleyIdentity.Cred | Offline password-hash, lockout reset and secret-protection key tooling |
+| HaleyIdentity.Cred | Offline password-hash, lockout reset and secret-protection key tooling, bundled with and callable through HaleyIdentityHost |
 | HaleyHelpersIdentity.Tests | Behavior, transport, transaction and isolated MariaDB integration tests |
 
 Use `HaleyHelpers.Identity_Ref.sln` while developing beside the Haley source repositories. `HaleyHelpers.Identity.sln` uses the approved Haley packages. The two new library packages are version 0.1.0. The host is deployed, not packaged as an SDK.
 
 Release builds generate signed `.nupkg` and `.snupkg` files for both libraries, following the existing Haley packaging workflow. See [packaging and publication](PACKAGING.md) for prerequisites, versioning and `CopyCorePackages.bat` usage. Until the required versions are available on your package feed, use the source-reference solution or a local feed. Building and collecting packages does not publish them.
+
+## Admin console and hosting
+
+Set `HaleyIdentityHost` as the startup project in `HaleyHelpers.Identity_Ref.sln`. The host serves the UI at `http://127.0.0.1:7430/admin/` and its admin backend at `/admin/api`. That backend calls the shared identity engine directly. Applications use the separate trusted API at `/api/identity`, in the same process. Kida retains its separate Admin and Service hosts.
+
+The host project's `AdminConsole` folder links to the shared Svelte source. With Node/npm installed, building generates the UI in `wwwroot/admin`; publishing includes it. Local runs read `appsettings.json`. Publishing uses `deploy.json` as the deployed `appsettings.json`, which the container stores in its Config volume. Both templates leave credentials and keys empty. Complete the connection, management password hash, keys and private-network setup in [the quick deployment guide](initialization.md) before starting the host.
+
+The host also includes the offline credential utility. Run `dotnet Haley.Identity.Host.dll hash-admin-password` from its output directory to generate the management password hash, or use `--help` for all credential commands. These commands reuse `Haley.Identity.Cred` and finish before the web server or database initialization starts.
 
 ## Registration
 
