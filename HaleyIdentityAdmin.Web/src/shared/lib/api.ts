@@ -116,6 +116,10 @@ export class IdentityAdminApi {
     return this.request(`applications/${applicationId}`, { method: 'DELETE' });
   }
 
+  reactivateIdentityApplication(applicationId: string): Promise<IdentityApplicationCredential> {
+    return this.request(`applications/${applicationId}/reactivate`, { method: 'POST' });
+  }
+
   login(password: string): Promise<{ authenticated: boolean }> {
     return this.request('login', { method: 'POST', body: { password } });
   }

@@ -29,6 +29,7 @@ Sign in to the admin console and open **Applications**. Register a name, optiona
 | `rotate-application-key <guid>` | Issue a new key while keeping existing keys active. |
 | `revoke-application-key <guid> <key-id>` | Disable an old key after the backend has switched. |
 | `revoke-application <guid>` | Disable all keys for the application. |
+| `reactivate-application <guid>` | Reactivate the same application ID and print a fresh credential. Previously revoked keys stay invalid. |
 
 For example, prefix a command with `dotnet Haley.Identity.Host.dll` from the host output directory. Every application command accepts `--settings <absolute-path-to-host-settings>`. Use that option when the credential tool is installed separately from the host. The tool operates on the file directly and does not need a running host, an admin cookie, or a database connection; filesystem write access is its administration boundary.
 
@@ -38,7 +39,7 @@ Keys remain under `Haley:Identity:Server:SessionBindingKeys:<application-guid>:<
 
 UI changes update the running registry immediately after persistence succeeds. The host checks the file once per second for CLI or external changes. It validates the complete registry before swapping its in-memory snapshot. Invalid or unavailable files leave the last valid registry active and produce a server diagnostic. Concurrent UI/CLI writes are serialized with a file lock and replaced atomically; unrelated JSON settings are retained. Manual editors should save complete valid files and avoid editing concurrently with management operations. Configuration formatting and comments may be normalized when a management operation saves the file.
 
-For rotation, copy the new key into the caller's private settings and reload or restart that caller, then revoke its old key through the UI or CLI. The Identity host does not require a restart. Revoking an application prevents further application API calls; it does not delete users or stored session records. This live reload applies to the application registry only. Other host settings, such as callback allowlists, still follow their existing startup behavior. Kida's OAuth clients remain managed through Kida.
+Active applications show **Rotate key** and **Revoke application** in the UI. For rotation, copy the new key into the caller's private settings and reload or restart that caller, then revoke its old key through the UI or CLI. The Identity host does not require a restart. Revoking an application prevents further application API calls; it does not delete users or stored session records. Revoked applications show **Reactivate application**. Reactivation retains the application ID and issues a fresh key; save this credential in the caller because revoked keys never become valid again. It returns the status to Active (2). The same action is available as `reactivate-application` in Cred. This live reload applies to the application registry only. Other host settings, such as callback allowlists, still follow their existing startup behavior. Kida's OAuth clients remain managed through Kida.
 
 ## Podman
 

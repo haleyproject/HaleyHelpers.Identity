@@ -123,6 +123,34 @@ public sealed class ApplicationRegistryTests : IDisposable
         registry.Authenticate(credential.ApplicationId, credential.SessionKeyId, credential.SessionBindingSecret);
 
     [Fact]
+    public async Task ReactivationKeepsTheApplicationIdAndNeverRestoresRevokedKeys()
+    {
+        var id = Guid.NewGuid();
+        const string oldSecret = "previously-revoked-application-secret-with-32-characters";
+        var configured = new Dictionary<string, Dictionary<string, string>> { [id.ToString("D")] = new() { ["old-key"] = oldSecret } };
+        var registry = new IdentityApplicationRegistry(configured, SettingsPath);
+        Assert.Equal(404, (await registry.ReactivateAsync(Guid.NewGuid())).Code);
+        Assert.Equal(409, (await registry.ReactivateAsync(id)).Code);
+        Assert.True(registry.Authenticate(id, "old-key", oldSecret));
+        Assert.True((await registry.RevokeAsync(id)).Status);
+        var reader = new IdentityApplicationRegistry(configured, SettingsPath);
+        var reactivated = await registry.ReactivateAsync(id);
+        Assert.True(reactivated.Status, reactivated.Message);
+        Assert.Equal(id, reactivated.Result.ApplicationId);
+        Assert.False(registry.Authenticate(id, "old-key", oldSecret));
+        Assert.True(Accepts(registry, reactivated.Result));
+        await reader.ReloadAsync();
+        Assert.True(Accepts(reader, reactivated.Result));
+        Assert.False(reader.Authenticate(id, "old-key", oldSecret));
+        var restarted = new IdentityApplicationRegistry(configured, SettingsPath);
+        Assert.Equal(IdentityRecordStatus.Active, restarted.List().Single().Status);
+        Assert.Equal(new[] { reactivated.Result.SessionKeyId }, restarted.List().Single().KeyIds);
+        Assert.True(Accepts(restarted, reactivated.Result));
+        Assert.False(restarted.Authenticate(id, "old-key", oldSecret));
+        Assert.Equal(409, (await registry.ReactivateAsync(id)).Code);
+    }
+
+    [Fact]
     public async Task RotationPreservesExistingConfiguredKeyLabels()
     {
         var id = Guid.NewGuid();

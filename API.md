@@ -11,10 +11,11 @@ The standalone admin console uses its existing management login and CSRF protect
 | GET | `/admin/api/applications` | List application IDs, display names, numeric statuses and key IDs. Never returns secrets. |
 | POST | `/admin/api/applications` | Register `{ "displayName": "LearnDesk", "applicationId": "optional-guid" }`; omit the ID to generate one. Returns the new credential once. |
 | POST | `/admin/api/applications/{id}/keys` | Issue a new key. Existing keys remain valid during the caller's transition. Returns the new credential once. |
+| POST | `/admin/api/applications/{id}/reactivate` | Reactivate a revoked application with the same ID and a fresh credential. Previously revoked keys remain invalid. Returns 409 if already active. |
 | DELETE | `/admin/api/applications/{id}/keys/{keyId}` | Revoke a specific key. Removing the final key requires revoking the application instead. |
 | DELETE | `/admin/api/applications/{id}` | Revoke all application keys and retain a revoked registry entry. Does not delete user data or session records. |
 
-Registration and rotation return `applicationId`, `sessionKeyId` and `sessionBindingSecret` with `Cache-Control: no-store`. Registry statuses use `IdentityRecordStatus`: Active = 2 and Revoked = 64. Applications cannot rotate or revoke their own credentials through the application API; these are management operations. Registry changes are configuration-backed and do not change the SQL schema.
+Registration, rotation and reactivation return `applicationId`, `sessionKeyId` and `sessionBindingSecret` with `Cache-Control: no-store`. Registry statuses use numeric `IdentityRecordStatus` values on the wire even when a host uses string serialization for other enums: Active = 2 and Revoked = 64. Applications cannot manage their own credentials through the application API; these are management operations. Registry changes are configuration-backed and do not change the SQL schema.
 
 | SDK operation | HTTP method | Relative path |
 | --- | --- | --- |

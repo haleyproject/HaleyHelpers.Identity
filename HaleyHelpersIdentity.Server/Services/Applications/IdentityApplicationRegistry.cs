@@ -119,6 +119,21 @@ public sealed class IdentityApplicationRegistry
         return Success(true, "Application key revoked.");
     }, cancellationToken);
 
+    public Task<IFeedback<IdentityApplicationCredential>> ReactivateAsync(Guid applicationId,
+        CancellationToken cancellationToken = default) => MutateAsync((root, entries) =>
+    {
+        if (!entries.TryGetValue(applicationId, out var app)) return Missing<IdentityApplicationCredential>();
+        if (app.Status != IdentityRecordStatus.Revoked)
+            return Failure<IdentityApplicationCredential>(409, "application_active", "The application is already active. Rotate its key to issue another credential.");
+        var credential = NewCredential(applicationId);
+        WriteEntry(root, applicationId, app with
+        {
+            Status = IdentityRecordStatus.Active,
+            Keys = new(StringComparer.Ordinal) { [credential.SessionKeyId] = credential.SessionBindingSecret }
+        });
+        return Success(credential, "Application reactivated. Save the new credential now; previously revoked keys remain invalid.");
+    }, cancellationToken);
+
     public Task<IFeedback<bool>> RevokeAsync(Guid applicationId,
         CancellationToken cancellationToken = default) => MutateAsync((root, entries) =>
     {

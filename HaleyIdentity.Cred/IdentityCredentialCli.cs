@@ -50,6 +50,9 @@ public static class IdentityCredentialCli
                       Disable an old key after callers have switched to the new one.
                     revoke-application <application-guid> [--settings <file>]
                       Disable every key for the application. Does not delete user accounts.
+                    reactivate-application <application-guid> [--settings <file>]
+                      Reactivate a revoked application and print a fresh credential once.
+                      The application ID is retained. Previously revoked keys remain invalid.
 
                     Application changes persist directly to appsettings.json beside this executable.
                     The running host checks for valid changes once per second, without restarting.

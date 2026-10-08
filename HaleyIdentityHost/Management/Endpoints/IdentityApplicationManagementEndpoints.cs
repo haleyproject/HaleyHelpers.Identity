@@ -22,6 +22,8 @@ public static class IdentityApplicationManagementEndpoints
             (await registry.RegisterAsync(request, ct)).ToMinimalApiResult());
         group.MapPost("/{applicationId:guid}/keys", async (Guid applicationId, IdentityApplicationRegistry registry, CancellationToken ct) =>
             (await registry.RotateAsync(applicationId, ct)).ToMinimalApiResult());
+        group.MapPost("/{applicationId:guid}/reactivate", async (Guid applicationId, IdentityApplicationRegistry registry, CancellationToken ct) =>
+            (await registry.ReactivateAsync(applicationId, ct)).ToMinimalApiResult());
         group.MapDelete("/{applicationId:guid}/keys/{keyId}", async (Guid applicationId, string keyId, IdentityApplicationRegistry registry, CancellationToken ct) =>
             (await registry.RevokeKeyAsync(applicationId, keyId, ct)).ToMinimalApiResult());
         group.MapDelete("/{applicationId:guid}", async (Guid applicationId, IdentityApplicationRegistry registry, CancellationToken ct) =>

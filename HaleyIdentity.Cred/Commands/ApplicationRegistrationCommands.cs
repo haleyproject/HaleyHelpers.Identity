@@ -9,7 +9,7 @@ namespace Haley.Tools;
 public static class ApplicationRegistrationCommands
 {
     public static bool IsCommand(string[] args) => args.Length > 0 && args[0].ToLowerInvariant() is
-        "register-application" or "list-applications" or "rotate-application-key" or "revoke-application-key" or "revoke-application";
+        "register-application" or "list-applications" or "rotate-application-key" or "revoke-application-key" or "revoke-application" or "reactivate-application";
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -61,6 +61,7 @@ public static class ApplicationRegistrationCommands
             "rotate-application-key" when values.Count == 1 => Print(await registry.RotateAsync(applicationId).ConfigureAwait(false)),
             "revoke-application-key" when values.Count == 2 => Print(await registry.RevokeKeyAsync(applicationId, values[1]).ConfigureAwait(false)),
             "revoke-application" when values.Count == 1 => Print(await registry.RevokeAsync(applicationId).ConfigureAwait(false)),
+            "reactivate-application" when values.Count == 1 => Print(await registry.ReactivateAsync(applicationId).ConfigureAwait(false)),
             _ => Invalid()
         };
     }

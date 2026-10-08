@@ -67,6 +67,8 @@ public sealed class ManagementBoundaryTests
         Directory.CreateDirectory(root);
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        builder.Services.ConfigureHttpJsonOptions(options =>
+            options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             [$"{IdentityManagementOptions.SectionName}:PasswordHash"] = new PasswordHasher<object>().HashPassword(new(), "test-only-password"),
@@ -115,6 +117,8 @@ public sealed class ManagementBoundaryTests
         var list = await (await Send(admin, cookies, HttpMethod.Get, "/admin/api/applications")).Content.ReadAsStringAsync();
         Assert.DoesNotContain(original.SessionBindingSecret, list);
         Assert.DoesNotContain("sessionBindingSecret", list);
+        using (var document = System.Text.Json.JsonDocument.Parse(list))
+            Assert.Equal(2, document.RootElement[0].GetProperty("status").GetInt32());
         var applicationPath = "/admin/api/applications/" + original.ApplicationId;
         var rotated = await Send(admin, cookies, HttpMethod.Post, applicationPath + "/keys", session.AntiforgeryToken);
         Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
@@ -129,6 +133,27 @@ public sealed class ManagementBoundaryTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await caller.GetAsync("/api/identity/registry-probe")).StatusCode);
         Assert.False(new IdentityApplicationRegistry(new(), Path.Combine(root, "appsettings.json"))
             .Authenticate(original.ApplicationId, replacement.SessionKeyId, replacement.SessionBindingSecret));
+        var revokedList = await (await Send(admin, cookies, HttpMethod.Get, "/admin/api/applications")).Content.ReadAsStringAsync();
+        using (var document = System.Text.Json.JsonDocument.Parse(revokedList))
+            Assert.Equal(64, document.RootElement[0].GetProperty("status").GetInt32());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await caller.PostAsync(applicationPath + "/reactivate", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(admin, cookies, HttpMethod.Post, applicationPath + "/reactivate")).StatusCode);
+        var reactivated = await Send(admin, cookies, HttpMethod.Post, applicationPath + "/reactivate", session.AntiforgeryToken);
+        Assert.Equal(HttpStatusCode.OK, reactivated.StatusCode);
+        Assert.True(reactivated.Headers.CacheControl?.NoStore);
+        var fresh = (await reactivated.Content.ReadFromJsonAsync<IdentityApplicationCredential>())!;
+        Assert.Equal(original.ApplicationId, fresh.ApplicationId);
+        Assert.NotEqual(replacement.SessionKeyId, fresh.SessionKeyId);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await caller.GetAsync("/api/identity/registry-probe")).StatusCode);
+        UseCredential(caller, fresh);
+        Assert.Equal(HttpStatusCode.OK, (await caller.GetAsync("/api/identity/registry-probe")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Send(admin, cookies, HttpMethod.Post, applicationPath + "/reactivate", session.AntiforgeryToken)).StatusCode);
+        var activeList = await (await Send(admin, cookies, HttpMethod.Get, "/admin/api/applications")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain(fresh.SessionBindingSecret, activeList);
+        using (var document = System.Text.Json.JsonDocument.Parse(activeList))
+            Assert.Equal(2, document.RootElement[0].GetProperty("status").GetInt32());
+        Assert.True(new IdentityApplicationRegistry(new(), Path.Combine(root, "appsettings.json"))
+            .Authenticate(fresh.ApplicationId, fresh.SessionKeyId, fresh.SessionBindingSecret));
         await app.StopAsync();
         Directory.Delete(root, true);
     }

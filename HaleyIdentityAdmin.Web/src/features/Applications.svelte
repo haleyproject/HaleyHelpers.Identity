@@ -3,8 +3,8 @@
   import { adminApi } from '../shared/lib/api';
   import { copyText } from '../shared/lib/clipboard';
   import { requestConfirmation } from '../shared/lib/confirmation';
-  import { showError } from '../shared/lib/snackbar';
-  import { RecordStatus } from '../shared/lib/statuses';
+  import { showError, showSuccess } from '../shared/lib/snackbar';
+  import { RecordStatus, statusLabel } from '../shared/lib/statuses';
   import type { IdentityApplicationCredential, RegisteredIdentityApplication } from '../shared/lib/types';
 
   let applications: RegisteredIdentityApplication[] = [];
@@ -62,7 +62,7 @@
 
   async function revoke(app: RegisteredIdentityApplication) {
     if (!await requestConfirmation({ title: `Revoke ${app.displayName}?`,
-      message: 'All application keys will stop working. This application will no longer be able to call Identity. User accounts and stored sessions are retained.',
+      message: 'All application keys will stop working. You can reactivate the application later with a fresh key. User accounts and stored sessions are retained.',
       confirmLabel: 'Revoke application', tone: 'danger' })) return;
     saving = true;
     try {
@@ -73,9 +73,30 @@
     finally { saving = false; }
   }
 
+  async function reactivate(app: RegisteredIdentityApplication) {
+    if (!await requestConfirmation({ title: `Reactivate ${app.displayName}?`,
+      message: 'The application will become active with a fresh key and keep its existing application ID. Update the calling backend with the new credential. Previously revoked keys will remain invalid.',
+      confirmLabel: 'Reactivate and issue key' })) return;
+    saving = true; notice = ''; copied = false;
+    try {
+      issued = await adminApi.reactivateIdentityApplication(app.applicationId);
+      notice = 'Application reactivated. Save the new credential in the calling backend.';
+      await load();
+    } catch (reason) { failure(reason); }
+    finally { saving = false; }
+  }
+
   async function copyConfiguration() {
     copied = await copyText(configuration);
     if (!copied) showError('Select and copy the configuration manually.', 'Clipboard unavailable');
+  }
+
+  async function copyIdentifier(value: string, label: string) {
+    let succeeded = false;
+    try { succeeded = await copyText(value); }
+    catch { succeeded = false; }
+    if (succeeded) showSuccess(`${label} copied to clipboard.`, 'Copied');
+    else showError('Select and copy the identifier manually.', 'Clipboard unavailable');
   }
 
   function failure(reason: unknown) {
@@ -83,7 +104,7 @@
   }
 </script>
 
-<section class="applications-page">
+<section class="page applications-page">
   <header class="page-header">
     <div><p class="eyebrow">Identity access</p><h1>Applications</h1><p>Register the backends allowed to call this identity service.</p></div>
     <button class="quiet" disabled={loading || saving} onclick={() => void load()}>Refresh</button>
@@ -113,18 +134,24 @@
       <tbody>
         {#each applications as app (app.applicationId)}
           <tr>
-            <td><strong>{app.displayName}</strong><code class="application-id">{app.applicationId}</code></td>
-            <td>{app.status === RecordStatus.Active ? 'Active' : 'Revoked'}</td>
+            <td><strong>{app.displayName}</strong><code class="application-id"><button type="button" class="copy-link identifier-copy"
+              title="Copy application ID" aria-label={`Copy application ID for ${app.displayName}`}
+              onclick={() => void copyIdentifier(app.applicationId, 'Application ID')}>{app.applicationId}</button></code></td>
+            <td>{typeof app.status === 'number' ? statusLabel(app.status) : 'Unknown status'}</td>
             <td>
               {#each app.keyIds as keyId}
-                <div class="key-row"><code>{keyId}</code>{#if issued?.sessionKeyId === keyId}<small>New</small>{/if}
-                  <button class="quiet danger-text" disabled={saving || app.keyIds.length < 2} title={app.keyIds.length < 2 ? 'Rotate first or revoke the application to remove its final key.' : 'Revoke this key'} onclick={() => void revokeKey(app, keyId)}>Revoke key</button></div>
+                <div class="key-row"><code><button type="button" class="copy-link identifier-copy"
+                  title="Copy key ID" aria-label={`Copy key ID ${keyId} for ${app.displayName}`}
+                  onclick={() => void copyIdentifier(keyId, 'Key ID')}>{keyId}</button></code>{#if issued?.sessionKeyId === keyId}<small>New</small>{/if}
+                  <button class="quiet danger-text" disabled={saving || app.status !== RecordStatus.Active || app.keyIds.length < 2} title={app.keyIds.length < 2 ? 'Rotate first or revoke the application to remove its final key.' : 'Revoke this key'} onclick={() => void revokeKey(app, keyId)}>Revoke key</button></div>
               {:else}<span>No active keys</span>{/each}
             </td>
             <td>{#if app.status === RecordStatus.Active}<div class="application-actions">
               <button class="quiet" disabled={saving || issued !== null} onclick={() => void rotate(app)}>Rotate key</button>
               <button class="quiet danger-text" disabled={saving} onclick={() => void revoke(app)}>Revoke application</button>
-            </div>{/if}</td>
+            </div>{:else if app.status === RecordStatus.Revoked}
+              <button class="quiet" disabled={saving || issued !== null} onclick={() => void reactivate(app)}>Reactivate application</button>
+            {/if}</td>
           </tr>
         {:else}<tr><td colspan="4">{loading ? 'Loading applications…' : 'No applications registered yet.'}</td></tr>{/each}
       </tbody>
@@ -141,5 +168,7 @@
   .credential-actions { margin-top: .75rem; }
   .key-row + .key-row { margin-top: .5rem; }
   .application-id { display: block; margin-top: .4rem; overflow-wrap: anywhere; }
+  .identifier-copy { max-width: 100%; text-align: left; overflow-wrap: anywhere; user-select: all; }
+  .identifier-copy:focus-visible { outline: 2px solid var(--mint-dark); outline-offset: 3px; border-radius: 3px; }
   .key-row code { overflow-wrap: anywhere; }
 </style>
