@@ -1,12 +1,12 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 
 namespace Haley.Services;
 
-public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> options) : IEndpointFilter
+public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> options, IdentityApplicationRegistry? registry = null) : IEndpointFilter
 {
+    private readonly IdentityApplicationRegistry _applications = registry ?? new(options.Value.SessionBindingKeys,
+        initialApplications: options.Value.Applications);
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
         context.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -18,17 +18,11 @@ public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> optio
         if (!Guid.TryParse(context.HttpContext.Request.Headers["X-Haley-Application-Id"], out var applicationId) || applicationId == Guid.Empty)
             return Results.Problem("A valid application identifier is required.", statusCode: 400,
                 extensions: new Dictionary<string, object?> { ["code"] = "application_required" });
-        if (metadata.Operation is "AuthenticatePassword" or "CreateApplicationSession" or "ValidateSession" or "RevokeSession" or "BeginVerificationPasswordlessLogin" or "CompleteVerificationPasswordlessLogin" or "RedeemFederation")
-        {
-            var keyId = context.HttpContext.Request.Headers["X-Haley-Session-Key-Id"].ToString();
-            var provided = context.HttpContext.Request.Headers["X-Haley-Session-Key"].ToString();
-            if (string.IsNullOrEmpty(keyId) || string.IsNullOrEmpty(provided) || provided.Length > 512 ||
-                !options.Value.SessionBindingKeys.TryGetValue(applicationId.ToString("D"), out var keys) ||
-                !keys.TryGetValue(keyId, out var expected) || string.IsNullOrWhiteSpace(expected) ||
-                !CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(provided)), SHA256.HashData(Encoding.UTF8.GetBytes(expected))))
-                return Results.Problem("The application session binding was rejected.", statusCode: 401,
-                    extensions: new Dictionary<string, object?> { ["code"] = "invalid_session_binding" });
-        }
+        var keyId = context.HttpContext.Request.Headers["X-Haley-Session-Key-Id"].ToString();
+        var provided = context.HttpContext.Request.Headers["X-Haley-Session-Key"].ToString();
+        if (!_applications.Authenticate(applicationId, keyId, provided))
+            return Results.Problem("The application credential was rejected.", statusCode: 401,
+                extensions: new Dictionary<string, object?> { ["code"] = "invalid_session_binding" });
         return await next(context).ConfigureAwait(false);
     }
 }

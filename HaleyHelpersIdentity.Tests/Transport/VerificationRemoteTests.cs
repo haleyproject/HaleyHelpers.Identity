@@ -27,7 +27,8 @@ public sealed class VerificationRemoteTests
             Assert.Equal(appId.ToString("D"), context.Request.Headers["X-Haley-Application-Id"]);
             Assert.Equal("POST", context.Request.Method); Assert.False(context.Request.QueryString.HasValue);
             Assert.True(context.Request.HasJsonContentType());
-            if (purpose == VerificationPurpose.PasswordlessLogin) Assert.Equal("active", context.Request.Headers["X-Haley-Session-Key-Id"]);
+            Assert.Equal("active", context.Request.Headers["X-Haley-Session-Key-Id"]);
+            Assert.Equal("test-application-session-binding-secret", context.Request.Headers["X-Haley-Session-Key"]);
             using var body = await JsonDocument.ParseAsync(context.Request.Body);
             Assert.Equal((int)purpose, Property(body.RootElement, "purpose").GetInt32());
             context.Response.ContentType = "application/json";

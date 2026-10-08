@@ -10,6 +10,9 @@ public static class IdentityRemoteRegistration
     {
         builder.SelectBackend("remote");
         RegisterRemote(builder.Services, configure);
+        builder.Services.AddOptions<IdentityOptions>()
+            .Validate(value => !string.IsNullOrWhiteSpace(value.SessionKeyId) && value.SessionBindingSecret.Length is >= 32 and <= 512,
+                "Remote standalone Identity requires an application key ID and a binding secret of 32 to 512 characters.").ValidateOnStart();
         return builder;
     }
 

@@ -4,6 +4,7 @@
   import Login from './shared/components/Login.svelte';
   import Users from './shared/features/Users.svelte';
   import Federation from './shared/features/Federation.svelte';
+  import Applications from './features/Applications.svelte';
   import ConfirmationDialog from './shared/components/ConfirmationDialog.svelte';
   import Snackbar from './shared/components/Snackbar.svelte';
   import { adminApi } from './shared/lib/api';
@@ -35,8 +36,10 @@
   <Login passwordConfigured={session?.passwordConfigured ?? false} onAuthenticated={() => void authenticated()} />
 {:else}
   <div class="app-shell" class:nav-collapsed={collapsed}>
-    <Navigation {active} capabilities={['identity']} {collapsed} onToggle={() => collapsed = !collapsed} onSelect={(value) => active = value} onLogout={() => void logout()} />
-    <main class="content">{#if active === 'federation'}<Federation />{:else}<Users />{/if}</main>
+    <Navigation {active} capabilities={['identity']} {collapsed}
+      items={[{ id: 'users', label: 'Identity', icon: '◎' }, { id: 'identity-applications', label: 'Applications', icon: '▦' }, { id: 'federation', label: 'Federation', icon: '↗' }]}
+      onToggle={() => collapsed = !collapsed} onSelect={(value) => active = value} onLogout={() => void logout()} />
+    <main class="content">{#if active === 'federation'}<Federation />{:else if active === 'identity-applications'}<Applications />{:else}<Users />{/if}</main>
   </div>
 {/if}
 <ConfirmationDialog />

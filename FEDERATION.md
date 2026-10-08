@@ -87,7 +87,7 @@ Haley ACS: `/identity/federation/saml/acs`. Kida ACS: `/api/kida/identity/federa
 
 Kida mounts the shared API at `/api/kida/identity/foundation`, behind machine bearer authentication and operation scopes. Begin/discovery use `identity.authenticate`; proof completion and redemption use `identity.federation.exchange`. The configured resource header remains bound through redemption. Kida's native OAuth start is `/api/kida/identity/federation/attempts`, and redemption is `/api/kida/identity/federation/handoffs`.
 
-For standalone remote calls, set `ApplicationId` in the client and request. Set `Context` to a stable nonempty application context such as `haley.identity`. Configure exact return URIs under `Haley:Identity:Server:AllowedReturnUris:<application-guid>`. Redemption requires that application's session binding key. Browser callbacks are deliberately anonymous because they authenticate the provider proof and only return a PKCE-bound handoff; the rest of the standalone machine API remains inside the trusted deployment boundary.
+For standalone remote calls, set `ApplicationId` in the client and request, and configure the registered application's `SessionKeyId` and `SessionBindingSecret`. All machine API operations, including discovery, initiation and redemption, require that application credential. Set `Context` to a stable nonempty application context such as `haley.identity`. Configure exact return URIs under `Haley:Identity:Server:AllowedReturnUris:<application-guid>`. Browser callbacks are deliberately anonymous because they authenticate the provider proof and only return a PKCE-bound handoff; the standalone machine API also remains inside the trusted deployment boundary.
 
 ## Ownership and fresh databases
 

@@ -1,7 +1,9 @@
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app/target
 COPY . .
-RUN mkdir -p Config Keys State SamlCerts && if [ -f appsettings.json ]; then mv appsettings.json Config/appsettings.json; fi
+RUN mkdir -p Config Keys State SamlCerts && \
+    if [ -f appsettings.json ]; then mv appsettings.json Config/appsettings.json; fi && \
+    ln -sfn /app/target/Config/appsettings.json appsettings.json
 RUN if [ -f wwwroot/admin/identity-admin.config.json ]; then mv wwwroot/admin/identity-admin.config.json Config/identity-admin.config.json; fi && \
     ln -sfn /app/target/Config/identity-admin.config.json wwwroot/admin/identity-admin.config.json
 EXPOSE 5000

@@ -1,5 +1,6 @@
 import type { AdminSession, AdminTotpEnrollment, BulkPasswordResetResponse, BulkUserImportResponse, BulkUserImportRowResult, IdentityClientPolicy, IdentityOperationalArea, IdentityOperationalPage, IdentityOperationalRecord, IdentityProvider, IdentityStatus, LoginProtectionPolicy, MfaDomainRule, MfaMethod, OAuthClient, OAuthClientPage, OAuthClientType, SamlCertificate, Section, TotpEnrollmentCompletion, UserActivityFilter, UserIdentity, UserIdentityPage, UserLoginAttempt, UserLoginAttemptPage, UserMfaPolicyOverride, UserProfile, UserSession, UserSessionPage, UserSortOrder } from './types';
 import { RecordStatus } from './statuses';
+import type { RegisteredIdentityApplication, IdentityApplicationCredential } from './types';
 
 
 export class ApiError extends Error {
@@ -93,6 +94,26 @@ export class IdentityAdminApi {
     const session = await this.request<AdminSession>('session');
     this.csrf = session.antiforgeryToken;
     return session;
+  }
+
+  identityApplications(): Promise<RegisteredIdentityApplication[]> {
+    return this.request('applications');
+  }
+
+  registerIdentityApplication(displayName: string, applicationId?: string): Promise<IdentityApplicationCredential> {
+    return this.request('applications', { method: 'POST', body: { displayName, applicationId } });
+  }
+
+  rotateIdentityApplicationKey(applicationId: string): Promise<IdentityApplicationCredential> {
+    return this.request(`applications/${applicationId}/keys`, { method: 'POST' });
+  }
+
+  revokeIdentityApplicationKey(applicationId: string, keyId: string): Promise<void> {
+    return this.request(`applications/${applicationId}/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+  }
+
+  revokeIdentityApplication(applicationId: string): Promise<void> {
+    return this.request(`applications/${applicationId}`, { method: 'DELETE' });
   }
 
   login(password: string): Promise<{ authenticated: boolean }> {

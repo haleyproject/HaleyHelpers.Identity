@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>Haley.Identity.Cred</AssemblyName><IsPackable>false</IsPackable></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>Haley.Identity.Cred</AssemblyName><IsPackable>false</IsPackable><UserSecretsId>$(IdentityHostUserSecretsId)</UserSecretsId></PropertyGroup>
   <ItemGroup><ProjectReference Include="../HaleyHelpersIdentity.Server/HaleyHelpersIdentity.Server.csproj" /></ItemGroup>
 </Project>

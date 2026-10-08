@@ -8,8 +8,8 @@ Reusable account storage and identity operations for .NET 8 applications. The sa
 | --- | --- |
 | HaleyHelpersIdentity | `Haley.Helpers.Identity`: public requests/results, numeric status enums, DI registration, and the single Haley.Rest client implementation |
 | HaleyHelpersIdentity.Server | Shared account, password, login protection, TOTP, recovery-code, verification/recovery, session and MariaDB engine; shared HTTP endpoints |
-| HaleyIdentityHost | Private ASP.NET Core host with a compact Identity/Federation admin UI and password-based management sessions |
-| HaleyIdentityAdmin.Web | Shared Kida-derived Svelte components; Haley branding and only Identity/Federation navigation |
+| HaleyIdentityHost | Private ASP.NET Core host with Identity, Applications and Federation administration and password-based management sessions |
+| HaleyIdentityAdmin.Web | Shared Kida-derived Svelte components; Haley branding and compact Identity, Applications and Federation navigation |
 | HaleyIdentity.Cred | Offline password-hash, lockout reset and secret-protection key tooling, bundled with and callable through HaleyIdentityHost |
 | HaleyHelpersIdentity.Tests | Behavior, transport, transaction and isolated MariaDB integration tests |
 
@@ -21,7 +21,7 @@ Release builds generate signed `.nupkg` and `.snupkg` files for both libraries, 
 
 Set `HaleyIdentityHost` as the startup project in `HaleyHelpers.Identity_Ref.sln`. The host serves the UI at `http://127.0.0.1:7430/admin/` and its admin backend at `/admin/api`. That backend calls the shared identity engine directly. Applications use the separate trusted API at `/api/identity`, in the same process. Kida retains its separate Admin and Service hosts.
 
-The host project's `AdminConsole` folder links to the shared Svelte source. With Node/npm installed, building generates the UI in `wwwroot/admin`; publishing includes it. Local runs read `appsettings.json`. Publishing uses `deploy.json` as the deployed `appsettings.json`, which the container stores in its Config volume. Both templates leave credentials and keys empty. Complete the connection, management password hash, keys and private-network setup in [the quick deployment guide](initialization.md) before starting the host.
+The host project's `AdminConsole` folder links to the shared Svelte source. With Node/npm installed, building generates the UI in `wwwroot/admin`; publishing includes it. The host uses normal ASP.NET configuration: `appsettings.json`, environment-specific settings, development User Secrets and environment variables. Publishing excludes local settings; supply deployment `appsettings.json` alongside the published host. The container links this file to its Config volume. Complete the connection, management password hash, keys and private-network setup in [the quick deployment guide](initialization.md) before starting the host.
 
 The host also includes the offline credential utility. Run `dotnet Haley.Identity.Host.dll hash-admin-password` from its output directory to generate the management password hash, or use `--help` for all credential commands. These commands reuse `Haley.Identity.Cred` and finish before the web server or database initialization starts.
 
@@ -33,7 +33,9 @@ Import `Haley.Extensions` and `Haley.Abstractions`. Choose one backend per servi
 services.AddHaleyIdentity(configuration, identity => identity.UseRemote());
 ```
 
-Configure `Haley:Identity:Url` with a Haley.Rest endpoint descriptor such as `base=http://haley-identity:5000/;`. Set `ApplicationId` to a stable application GUID. For session operations, set `SessionKeyId` and `SessionBindingSecret` to a configured application binding key. The default `ApiPath` is `api/identity`.
+Configure `Haley:Identity:Url` with a Haley.Rest endpoint descriptor such as `base=http://haley-identity:5000/;`. Register the calling backend in the standalone admin console's Applications page or with `register-application` in the bundled credential tool. Set `ApplicationId`, `SessionKeyId` and `SessionBindingSecret` from the issued credential. Every standalone application API operation requires these credentials, including account management and MFA. The default `ApiPath` is `api/identity`. Existing callers must update their SDK and credentials when upgrading from the earlier session-only key check.
+
+The UI and CLI share application registration, overlapping key rotation, individual key revocation and application revocation. Changes persist directly in `appsettings.json` and are picked up by the running host's one-second reload check. The host uses its content-root settings file; Cred defaults to the file beside its executable and accepts `--settings` for another host location. Neither reads a second settings file from Config. Podman's symlink handles the volume location, and persistence preserves that link. No application registry database or OAuth client is needed. See [application management](initialization.md#applications) for configuration merging and rotation steps. This registry is specific to standalone hosting; Kida continues to authenticate its own OAuth clients.
 
 For direct database access inside the trusted owning application, reference the Server package and select the embedded engine:
 

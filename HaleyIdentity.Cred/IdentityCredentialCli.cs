@@ -6,7 +6,7 @@ namespace Haley.Tools;
 public static class IdentityCredentialCli
 {
     public static bool IsCredentialCommand(string[] args) =>
-        args.Length > 0 && args[0].ToLowerInvariant() is
+        ApplicationRegistrationCommands.IsCommand(args) || args.Length > 0 && args[0].ToLowerInvariant() is
             "hash-admin-password" or "hash-password" or
             "generate-secret-protection-key" or "reset-lockout" or
             "help" or "--help" or "-h";
@@ -17,7 +17,8 @@ public static class IdentityCredentialCli
         const string section = "Haley:Identity:Management";
         try
         {
-            if (args.Length == 0 || args[0].ToLowerInvariant() is "help" or "--help" or "-h")
+            if (args.Length == 0 || args[0].ToLowerInvariant() is "help" or "--help" or "-h" ||
+                ApplicationRegistrationCommands.IsCommand(args) && args.Any(value => value is "--help" or "-h"))
             {
                 Console.WriteLine("""
                     Haley.Identity.Cred: offline identity deployment credentials
@@ -39,11 +40,29 @@ public static class IdentityCredentialCli
                       Clear only the management login lockout. The host may remain online.
                       Use the configured Management:LoginLockoutStatePath. No database access.
 
+                    register-application <display-name> [--application-id <guid>] [--settings <file>]
+                      Register an application and print its generated backend credential once.
+                    list-applications [--settings <file>]
+                      List names, IDs, numeric lifecycle states and key IDs. Never lists secrets.
+                    rotate-application-key <application-guid> [--settings <file>]
+                      Issue a new key. Existing keys remain valid until explicitly revoked.
+                    revoke-application-key <application-guid> <key-id> [--settings <file>]
+                      Disable an old key after callers have switched to the new one.
+                    revoke-application <application-guid> [--settings <file>]
+                      Disable every key for the application. Does not delete user accounts.
+
+                    Application changes persist directly to appsettings.json beside this executable.
+                    The running host checks for valid changes once per second, without restarting.
+                    Use --settings to target another host appsettings.json, including its project file during F5.
+                    Application secrets belong in calling backends, never browser configuration.
+
                     Browser cookie keys are created automatically by ASP.NET Data Protection.
                     Persist Management:KeyDirectory. They are separate from SecretProtection keys.
                     """);
                 return 0;
             }
+            if (ApplicationRegistrationCommands.IsCommand(args))
+                return ApplicationRegistrationCommands.RunAsync(args).GetAwaiter().GetResult();
             return args[0].ToLowerInvariant() switch
             {
                 "hash-admin-password" or "hash-password" => IdentityCredentialCommands.HashAdminPassword(args, tool),

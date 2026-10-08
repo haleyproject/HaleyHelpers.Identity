@@ -4,13 +4,13 @@
     <PackageId>Haley.Identity.Host</PackageId>
     <IsPackable>false</IsPackable>
     <IdentityAdminRoot>$(MSBuildProjectDirectory)/../HaleyIdentityAdmin.Web</IdentityAdminRoot>
-    <UserSecretsId>ebf660ef-2952-46b8-9733-36d02045d53e</UserSecretsId>
+    <UserSecretsId>$(IdentityHostUserSecretsId)</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../HaleyHelpersIdentity.Server/HaleyHelpersIdentity.Server.csproj" />
     <ProjectReference Include="../HaleyIdentity.Cred/HaleyIdentity.Cred.csproj" />
-    <!-- Local runs use appsettings.json. Publish installs deploy.json under that name. -->
+    <!-- Supply deployment appsettings.json separately; do not publish local settings. -->
     <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
     <!-- Vite owns these files. Publish adds them explicitly after the frontend build. -->
     <Content Remove="wwwroot/admin/**/*;wwwroot/.gitkeep" />

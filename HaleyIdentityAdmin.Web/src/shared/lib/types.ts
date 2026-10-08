@@ -3,7 +3,20 @@ import { RecordStatus } from './statuses';
 export type IdentityStatus = RecordStatus.Pending | RecordStatus.Active | RecordStatus.Locked | RecordStatus.Suspended | RecordStatus.Retired;
 export type UserActivityFilter = 'All' | 'NeverLoggedIn' | 'HasLoggedIn' | 'PasswordChangeRequired';
 export type UserSortOrder = 'CreatedNewest' | 'CreatedOldest' | 'LastLoginNewest' | 'LastLoginOldest';
-export type Section = 'overview' | 'operations' | 'users' | 'clients' | 'audiences' | 'federation' | 'scopes' | 'tenants' | 'access' | 'entitlements' | 'apps' | 'info';
+export type Section = 'overview' | 'operations' | 'users' | 'clients' | 'audiences' | 'federation' | 'scopes' | 'tenants' | 'access' | 'entitlements' | 'apps' | 'info' | 'identity-applications';
+
+export interface RegisteredIdentityApplication {
+  applicationId: string;
+  displayName: string;
+  status: number;
+  keyIds: string[];
+}
+
+export interface IdentityApplicationCredential {
+  applicationId: string;
+  sessionKeyId: string;
+  sessionBindingSecret: string;
+}
 export type OAuthClientType = 'Public' | 'Confidential' | 'Service';
 
 export interface AdminSession {

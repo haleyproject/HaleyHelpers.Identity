@@ -12,8 +12,14 @@ public static class IdentityHosting
 {
     public static void ConfigureBuilder(WebApplicationBuilder builder)
     {
-        builder.Configuration.AddJsonFile(Path.Combine(AppContext.BaseDirectory, "Config", "appsettings.json"), optional: true)
-            .AddEnvironmentVariables();
+        // The registry validates and reloads its own writes. Do not let the JSON provider's
+        // independent watcher tear down the host while an appsettings edit is incomplete.
+        foreach (var source in builder.Configuration.Sources.OfType<Microsoft.Extensions.Configuration.Json.JsonConfigurationSource>()
+            .Where(source => Path.GetFileName(source.Path) == "appsettings.json" && source.ReloadOnChange).ToArray())
+        {
+            source.ReloadOnChange = false;
+            builder.Configuration.Sources[builder.Configuration.Sources.IndexOf(source)] = source;
+        }
         builder.WebHost.UseUrls(builder.Configuration["Haley:Identity:ListenUrl"] ?? "http://127.0.0.1:7430");
         builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
         builder.Services.ConfigureHttpJsonOptions(options =>
@@ -38,6 +44,14 @@ public static class IdentityHosting
         builder.Services.AddSingleton<IAdapterGateway>(gateway);
         builder.Services.AddSingleton<IModularGateway>(gateway);
         builder.Services.AddHaleyIdentity(builder.Configuration, identity => identity.UseEmbedded(builder.Configuration));
+        builder.Services.AddSingleton(provider =>
+        {
+            var options = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<IdentityServerOptions>>().Value;
+            return new IdentityApplicationRegistry(options.SessionBindingKeys,
+                Path.Combine(builder.Environment.ContentRootPath, "appsettings.json"),
+                provider.GetRequiredService<IIdentityUuidGenerator>(), options.Applications);
+        });
+        builder.Services.AddHostedService<ApplicationRegistryReloadService>();
         builder.Services.AddOptions<IdentityServerOptions>()
             .Validate(options => options.TrustedNetwork, "Explicitly enable TrustedNetwork only inside the intended private application boundary.")
             .Validate(options => options.SessionBindingKeys.All(app => Guid.TryParseExact(app.Key, "D", out var applicationId) && applicationId != Guid.Empty && app.Value.All(key =>
@@ -86,6 +100,7 @@ public static class IdentityHosting
         ConfigureAdminConsole(app);
         app.MapIdentityManagementSessions();
         app.MapIdentityManagementEndpoints();
+        app.MapIdentityApplicationManagement();
         app.MapIdentityFederationBrowserEndpoints();
         app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
         app.MapHaleyIdentityEndpoints();

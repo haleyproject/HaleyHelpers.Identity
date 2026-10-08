@@ -21,5 +21,6 @@ public sealed class IdentityServerOptions
     public IdentityVerificationOptions Verification { get; set; } = new();
     public Dictionary<string, string[]> AllowedReturnUris { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool TrustedNetwork { get; set; }
+    public Dictionary<string, IdentityApplicationOptions> Applications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, Dictionary<string, string>> SessionBindingKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

@@ -2,7 +2,19 @@
 
 Standalone base path: `/api/identity`. Kida base path: `/api/kida/identity/foundation`. Both use the same JSON request/result contracts and the same generated route mappings. Existing Kida routes remain available.
 
-Every standalone call includes `X-Haley-Application-Id`. Session operations, including both email-login initiation and completion, additionally require `X-Haley-Session-Key-Id` and `X-Haley-Session-Key`. Other standalone operations trust the private network boundary. Kida calls instead include its bearer machine token and `X-Kida-Identity-Resource`; the application GUID must match the authenticated client. The SDK supplies these headers from configuration.
+Every standalone application API call includes `X-Haley-Application-Id`, `X-Haley-Session-Key-Id` and `X-Haley-Session-Key`. This applies to account management, MFA, verification, federation initiation/discovery and sessions. The configured private network boundary is still required. Missing application IDs return 400; missing, invalid or revoked credentials return 401 with `invalid_session_binding`. Kida calls instead include its bearer machine token and `X-Kida-Identity-Resource`; the application GUID must match the authenticated client. The SDK supplies these headers from configuration. Browser federation callbacks continue to authenticate provider proof instead of application headers.
+
+The standalone admin console uses its existing management login and CSRF protection for application registration. Application credentials cannot access these management routes:
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/admin/api/applications` | List application IDs, display names, numeric statuses and key IDs. Never returns secrets. |
+| POST | `/admin/api/applications` | Register `{ "displayName": "LearnDesk", "applicationId": "optional-guid" }`; omit the ID to generate one. Returns the new credential once. |
+| POST | `/admin/api/applications/{id}/keys` | Issue a new key. Existing keys remain valid during the caller's transition. Returns the new credential once. |
+| DELETE | `/admin/api/applications/{id}/keys/{keyId}` | Revoke a specific key. Removing the final key requires revoking the application instead. |
+| DELETE | `/admin/api/applications/{id}` | Revoke all application keys and retain a revoked registry entry. Does not delete user data or session records. |
+
+Registration and rotation return `applicationId`, `sessionKeyId` and `sessionBindingSecret` with `Cache-Control: no-store`. Registry statuses use `IdentityRecordStatus`: Active = 2 and Revoked = 64. Applications cannot rotate or revoke their own credentials through the application API; these are management operations. Registry changes are configuration-backed and do not change the SQL schema.
 
 | SDK operation | HTTP method | Relative path |
 | --- | --- | --- |

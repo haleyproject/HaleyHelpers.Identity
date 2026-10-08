@@ -13,7 +13,12 @@ public sealed class BoundaryTests
     [InlineData("RevokeSession")]
     [InlineData("BeginVerificationPasswordlessLogin")]
     [InlineData("CompleteVerificationPasswordlessLogin")]
-    public async Task SessionOperationsRequireAnApplicationBoundKey(string operation)
+    [InlineData("GetAccount")]
+    [InlineData("SetPassword")]
+    [InlineData("VerifyMfa")]
+    [InlineData("BeginVerificationEmailVerification")]
+    [InlineData("RedeemFederation")]
+    public async Task EveryStandaloneOperationRequiresAnApplicationBoundKey(string operation)
     {
         var applicationId = Guid.NewGuid();
         var options = new IdentityServerOptions { TrustedNetwork = true };
@@ -33,6 +38,7 @@ public sealed class BoundaryTests
         context.Request.Headers["X-Haley-Session-Key-Id"] = "previous"; context.Request.Headers["X-Haley-Session-Key"] = options.SessionBindingKeys[applicationId.ToString("D")]["previous"];
         Assert.Equal("accepted", await filter.InvokeAsync(invocation, Next));
         options.SessionBindingKeys[applicationId.ToString("D")].Remove("previous");
+        filter = new IdentityBoundaryFilter(Options.Create(options));
         Assert.IsAssignableFrom<IResult>(await filter.InvokeAsync(invocation, Next)); Assert.Equal(2, calls);
     }
 
@@ -46,6 +52,23 @@ public sealed class BoundaryTests
         ValueTask<object?> Next(EndpointFilterInvocationContext _) { calls++; return ValueTask.FromResult<object?>("accepted"); }
         Assert.IsAssignableFrom<IResult>(await filter.InvokeAsync(context, Next)); options.TrustedNetwork = true;
         Assert.IsAssignableFrom<IResult>(await filter.InvokeAsync(context, Next)); Assert.Equal(0, calls);
-        http.Request.Headers["X-Haley-Application-Id"] = Guid.NewGuid().ToString(); Assert.Equal("accepted", await filter.InvokeAsync(context, Next));
+        var applicationId = Guid.NewGuid().ToString("D");
+        http.Request.Headers["X-Haley-Application-Id"] = applicationId;
+        Assert.IsAssignableFrom<IResult>(await filter.InvokeAsync(context, Next)); Assert.Equal(0, calls);
+        options.SessionBindingKeys[applicationId] = new() { ["current"] = "application-authentication-test-secret" };
+        filter = new IdentityBoundaryFilter(Options.Create(options));
+        http.Request.Headers["X-Haley-Session-Key-Id"] = "current";
+        http.Request.Headers["X-Haley-Session-Key"] = options.SessionBindingKeys[applicationId]["current"];
+        Assert.Equal("accepted", await filter.InvokeAsync(context, Next));
+    }
+
+    [Fact]
+    public async Task OwnerManagedEndpointsKeepTheirExistingAuthenticationBoundary()
+    {
+        var filter = new IdentityBoundaryFilter(Options.Create(new IdentityServerOptions()));
+        var http = new DefaultHttpContext();
+        http.SetEndpoint(new Endpoint(null, new EndpointMetadataCollection(new IdentityOperationMetadata("GetAccount", false)), "owner"));
+        var result = await filter.InvokeAsync(EndpointFilterInvocationContext.Create(http), _ => ValueTask.FromResult<object?>("owner-authenticated"));
+        Assert.Equal("owner-authenticated", result);
     }
 }

@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>12</LangVersion>
     <RootNamespace>Haley</RootNamespace><Version>0.1.0</Version><IsPackable>false</IsPackable>
+    <IdentityHostUserSecretsId>ebf660ef-2952-46b8-9733-36d02045d53e</IdentityHostUserSecretsId>
     <HaleyProject Condition="'$(HaleyProject)' == ''">$(MSBuildThisFileDirectory)..</HaleyProject>
     <HaleyIdentityUseSourceReferences Condition="'$(HaleyIdentityUseSourceReferences)' == '' and ('$(KidaUseHaleyPackageReferences)' == 'false' or '$(SolutionName)' == 'Haley_AllReferences' or $([System.String]::Copy('$(SolutionName)').EndsWith('_Ref')))">true</HaleyIdentityUseSourceReferences>
     <HaleyIdentityUseSourceReferences Condition="'$(HaleyIdentityUseSourceReferences)' == ''">false</HaleyIdentityUseSourceReferences>
