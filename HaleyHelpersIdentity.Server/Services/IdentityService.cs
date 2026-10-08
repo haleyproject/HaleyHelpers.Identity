@@ -7,7 +7,8 @@ namespace Haley.Services;
 public sealed class IdentityService(IdentityStore store, IMfaService mfa,
     IIdentityApplicationContext application, IPasswordHasher hasher,
     ISecretTokenGenerator tokens, IIdentityUuidGenerator uuids, IIdentityClock clock,
-    IdentityCredentialVerifier credentials, IPasswordRecoveryService recovery, IOptions<IdentityServerOptions> options, IdentityVerificationService verification) : IIdentity
+    IdentityCredentialVerifier credentials, IPasswordRecoveryService recovery, IOptions<IdentityServerOptions> options, IdentityVerificationService verification,
+    TotpAuthenticationService totp) : IIdentity
 {
     public async ValueTask<IFeedback<UserIdentity>> GetAccountAsync(Guid userId, CancellationToken cancellationToken = default) =>
         Found(await store.FindUserAsync(userId, cancellationToken).ConfigureAwait(false));
@@ -112,6 +113,16 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
         await store.RecordLoginAttemptAndApplyProtectionAsync(new(credential.UserId, Hash(request.Username), application.ApplicationId,
             "success", null, null, null, now), options.Value.MaximumFailedAttempts, options.Value.LockoutSeconds, cancellationToken).ConfigureAwait(false);
         return await StartVerifiedSessionAsync(credential.UserId, credential.LocalCredentialId, authenticationMethods, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Creates a single-factor opaque session from an enrolled authenticator or recovery code.</summary>
+    public async ValueTask<IFeedback<OpaqueSession>> AuthenticateTotpAsync(TotpAuthenticationRequest request, CancellationToken cancellationToken = default)
+    {
+        var verified = await totp.AuthenticateAsync(request, application.ApplicationId, application.OwnerContext, cancellationToken).ConfigureAwait(false);
+        if (!verified.Status)
+            return new Feedback<OpaqueSession>(false, verified.Message) { Key = verified.Key, Code = verified.Code, Source = verified.Source };
+        return await StartVerifiedSessionAsync(verified.Result.UserId, null,
+            [request.Kind == MfaKind.RecoveryCode ? "recovery" : "totp"], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Server-only issuance after the owning host has verified the subject and applied its policies.</summary>

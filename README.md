@@ -27,6 +27,8 @@ The host also includes the offline credential utility. Run `dotnet Haley.Identit
 
 ## Registration
 
+Password-free authenticator login is available through `IIdentity.AuthenticateTotpAsync` for active accounts with verified email and enrolled TOTP. Enable `Server:TotpLogin:Enabled` and optionally restrict `ApplicationIds`. Kida reuses the engine and enforces its explicit MFA policies. Sessions record one factor only. See [authentication and recovery](AUTHENTICATION.md) for setup, routes and recovery codes.
+
 Import `Haley.Extensions` and `Haley.Abstractions`. Choose one backend per service collection.
 
 ```csharp

@@ -36,6 +36,9 @@ public sealed class IdentityRemoteClient(IdentityRemoteTransport transport) : II
     public ValueTask<IFeedback<OpaqueSession>> CreateApplicationSessionAsync(ApplicationSessionRequest request, CancellationToken cancellationToken = default) =>
         transport.SendAsync<OpaqueSession>("CreateApplicationSession", "sessions/application", Method.POST, request, cancellationToken);
 
+    public ValueTask<IFeedback<OpaqueSession>> AuthenticateTotpAsync(TotpAuthenticationRequest request, CancellationToken cancellationToken = default) =>
+        transport.SendAsync<OpaqueSession>("AuthenticateTotp", "sessions/totp", Method.POST, request, cancellationToken);
+
     public ValueTask<IFeedback<SessionValidation>> ValidateSessionAsync(string token, CancellationToken cancellationToken = default) =>
         transport.SendAsync<SessionValidation>("ValidateSession", "sessions/validation", Method.POST, new SessionTokenRequest(token), cancellationToken);
 

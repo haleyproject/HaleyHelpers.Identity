@@ -29,6 +29,7 @@ Registration, rotation and reactivation return `applicationId`, `sessionKeyId` a
 | `SetPasswordAsync` | PUT | `accounts/{userId}/password` |
 | `ChangePasswordAsync` | POST | `password/changes` |
 | `AuthenticatePasswordAsync` | POST | `sessions/password` |
+| `AuthenticateTotpAsync` | POST | `sessions/totp` |
 | `CreateApplicationSessionAsync` | POST | `sessions/application` |
 | `ValidateSessionAsync` | POST | `sessions/validation` |
 | `RevokeSessionAsync` | DELETE | `sessions` |
@@ -56,7 +57,7 @@ Successful operations return their result payload or 204. Failures use ProblemDe
 | --- | --- |
 | Read/resolve an account or profile | `identity.users.resolve` |
 | Ensure a minimal account | `identity.accounts.ensure` |
-| Password authentication | `identity.authenticate` |
+| Password or primary authenticator authentication | `identity.authenticate` |
 | Application-attested session | `identity.sessions.issue`; also `identity.accounts.ensure` when CreateIfMissing is true |
 | Validate / revoke opaque session | `identity.sessions.validate` / `identity.sessions.revoke` |
 | List/enroll/confirm/retire MFA or replace recovery codes | `identity.mfa.manage` |
@@ -65,6 +66,10 @@ Successful operations return their result payload or 204. Failures use ProblemDe
 | List accounts, update profiles/status/passwords, inspect login attempts, release locks | `identity.users.manage` |
 
 These are machine scopes on the Kida service API. Every request also verifies current client authority for the requested application resource. Registering the 1.4.0 Identity scope catalog does not add grants to existing clients. An application's assertion is accepted only with the dedicated session-issuance privilege; a machine token without that privilege cannot skip password login.
+
+## Primary authenticator login
+
+Primary authenticator login uses `TotpAuthenticationRequest(Email, Code, MethodId?, Kind)` and requires `TotpLogin:Enabled`. Optional `TotpLogin:ApplicationIds` limits eligible applications. Accounts require verified email and an active enrolled TOTP method. `Kind` defaults to TOTP; RecoveryCode accepts a one-use recovery proof. The resulting session records one factor only. Kida enforces explicit MFA requirements before consuming the proof. See [authentication workflows](AUTHENTICATION.md).
 
 ## Purpose-bound verification
 

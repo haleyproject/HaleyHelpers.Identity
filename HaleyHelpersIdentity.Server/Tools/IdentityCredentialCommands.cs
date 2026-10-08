@@ -90,24 +90,34 @@ public static class IdentityCredentialCommands
             return 3;
         }
 
+        CreateSecretProtectionKey(path);
+
+        Console.WriteLine($"Created a 32-byte secret-protection key at: {path}");
+        Console.WriteLine($"Add it to {configurationSection}, persist it, and restart the identity host.");
+        return 0;
+    }
+
+    internal static void CreateSecretProtectionKey(string path)
+    {
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
         var key = RandomNumberGenerator.GetBytes(32);
         try
         {
-            using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            var options = new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None
+            };
+            if (!OperatingSystem.IsWindows())
+                options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            using var stream = new FileStream(path, options);
             stream.Write(key);
+            stream.Flush(flushToDisk: true);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(key);
         }
 
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-
-        Console.WriteLine($"Created a 32-byte secret-protection key at: {path}");
-        Console.WriteLine($"Add it to {configurationSection}, persist it, and restart the identity host.");
-        return 0;
     }
 }

@@ -8,7 +8,7 @@ public static class IdentityCredentialCli
     public static bool IsCredentialCommand(string[] args) =>
         ApplicationRegistrationCommands.IsCommand(args) || args.Length > 0 && args[0].ToLowerInvariant() is
             "hash-admin-password" or "hash-password" or
-            "generate-secret-protection-key" or "reset-lockout" or
+            "generate-secret-protection-key" or "set-secret-key" or "reset-lockout" or
             "help" or "--help" or "-h";
 
     public static int Run(string[] args)
@@ -31,6 +31,12 @@ public static class IdentityCredentialCli
                       Read a password without echoing, confirm it, and print its ASP.NET
                       Identity hash. Set Haley:Identity:Management:PasswordHash and restart.
                       Minimum 9 characters. Redirected input reads one line. No password arguments.
+
+                    set-secret-key [--settings <appsettings.json>] [--key-file <persistent-key-file>]
+                      Create a protection key and save ActiveKeyId and Keys automatically.
+                      Defaults to appsettings.json beside this executable and its Keys directory.
+                      Reuses a valid existing key; never replaces configured keys. Restart the host.
+                      Persist the settings and key file together. No database access.
 
                     generate-secret-protection-key <key-file>
                       Create a new 32-byte key for Haley:Identity:Server:SecretProtection.
@@ -70,6 +76,7 @@ public static class IdentityCredentialCli
             {
                 "hash-admin-password" or "hash-password" => IdentityCredentialCommands.HashAdminPassword(args, tool),
                 "generate-secret-protection-key" => IdentityCredentialCommands.GenerateSecretProtectionKey(args, tool, "Haley:Identity:Server:SecretProtection"),
+                "set-secret-key" => SecretProtectionKeyCommand.RunAsync(args, tool, "Haley:Identity:Server:SecretProtection").GetAwaiter().GetResult(),
                 "reset-lockout" when args.Length == 2 => AdminLoginLockoutFile.RunResetCommand([args[1]], section, tool),
                 _ => Invalid()
             };

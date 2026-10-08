@@ -40,7 +40,9 @@ public static class IdentityServerRegistration
                 "Identity verification lifetimes exceed the configured bounds.")
             .Validate(value => value.SessionBindingKeys.All(app => Guid.TryParseExact(app.Key, "D", out var id) && id != Guid.Empty &&
                 app.Value.All(key => !string.IsNullOrWhiteSpace(key.Key) && key.Value.Length is >= 32 and <= 512)),
-                "Session binding keys require canonical application GUIDs, key identifiers and secrets of 32 to 512 characters.").ValidateOnStart();
+                "Session binding keys require canonical application GUIDs, key identifiers and secrets of 32 to 512 characters.")
+            .Validate(value => value.TotpLogin.ApplicationIds.All(id => id != Guid.Empty),
+                "Authenticator-login application IDs must be nonempty GUIDs.").ValidateOnStart();
         services.AddOptions<IdentityOptions>();
         services.AddRateLimiter(limits =>
         {
@@ -81,6 +83,8 @@ public static class IdentityServerRegistration
         services.TryAddScoped<IIdentityApplicationContext, IdentityApplicationContext>();
         services.TryAddSingleton<VerificationProofService>();
         services.TryAddSingleton<IIdentityVerificationStore>(provider => provider.GetRequiredService<IdentityStore>());
+        services.TryAddSingleton<ITotpAuthenticationPolicy, TotpAuthenticationPolicy>();
+        services.TryAddSingleton<TotpAuthenticationService>();
         services.TryAddSingleton<IIdentityVerificationMfaPolicy, IdentityVerificationMfaPolicy>();
         services.TryAddScoped<IdentityVerificationService>();
         services.TryAddScoped<IdentityService>();

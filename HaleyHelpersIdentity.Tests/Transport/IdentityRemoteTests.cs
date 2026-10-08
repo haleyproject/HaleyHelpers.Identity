@@ -15,6 +15,34 @@ namespace Haley.Identity.Tests;
 public sealed class IdentityRemoteTests
 {
     [Fact]
+    public async Task TotpLoginSendsProofInBodyWithApplicationCredentialsAndPreservesTheSession()
+    {
+        var appId = Guid.NewGuid(); var sessionId = Guid.NewGuid();
+        using var server = new TestServer(new WebHostBuilder().Configure(app => app.Run(async context =>
+        {
+            Assert.Equal("POST", context.Request.Method); Assert.Equal("/api/identity/sessions/totp", context.Request.Path);
+            Assert.False(context.Request.QueryString.HasValue);
+            Assert.Equal(appId.ToString("D"), context.Request.Headers["X-Haley-Application-Id"]);
+            Assert.Equal("active", context.Request.Headers["X-Haley-Session-Key-Id"]);
+            using var body = await System.Text.Json.JsonDocument.ParseAsync(context.Request.Body);
+            Assert.Contains(body.RootElement.EnumerateObject(), property => property.Name.Equals("code", StringComparison.OrdinalIgnoreCase) && property.Value.GetString() == "123456");
+            await context.Response.WriteAsJsonAsync(new OpaqueSession(sessionId, "opaque-test-session", DateTimeOffset.UtcNow.AddMinutes(5)));
+        })));
+        var settings = Options.Create(new IdentityOptions { ApplicationId = appId, Url = "base=http://localhost/;", ApiPath = "api/identity",
+            SessionKeyId = "active", SessionBindingSecret = "test-session-binding-secret-for-transport" });
+        var key = $"{typeof(IdentityRemoteTransport).FullName}:{appId:D}:{settings.Value.Url}";
+        ClientStore.AddClient(key, new FluentClient("http://localhost/", server.CreateHandler()));
+        try
+        {
+            var client = new IdentityRemoteClient(new(settings, new IdentityRemoteAuthentication(), NullLogger<IdentityRemoteTransport>.Instance));
+            var result = await client.AuthenticateTotpAsync(new("person@example.test", "123456"));
+            Assert.True(result.Status, result.Message); Assert.Equal(sessionId, result.Result.SessionId);
+            Assert.Equal("opaque-test-session", result.Result.Token);
+        }
+        finally { ClientStore.RemoveClient(key); }
+    }
+
+    [Fact]
     public async Task RemoteClientPreservesBindingHeadersProblemDetailsAndCancellation()
     {
         var appId = Guid.NewGuid();

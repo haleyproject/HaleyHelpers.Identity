@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Haley.Security;
+using Haley.Utils;
 
 namespace Haley.Services;
 
@@ -11,7 +12,7 @@ public sealed class IdentityApplicationRegistry
 {
     private const string KeysProperty = "SessionBindingKeys";
     private const string MetadataProperty = "Applications";
-    private readonly string? _settingsPath;
+    private readonly IdentitySettingsFile? _settings;
     private readonly IIdentityUuidGenerator _ids;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<Guid, Entry> _seed;
@@ -24,21 +25,16 @@ public sealed class IdentityApplicationRegistry
         IIdentityUuidGenerator? ids = null, Dictionary<string, IdentityApplicationOptions>? initialApplications = null)
     {
         _ids = ids ?? new Uuid7Generator(new SystemClock());
-        if (settingsPath is not null)
-        {
-            var file = new FileInfo(Path.GetFullPath(settingsPath));
-            // Replace the target atomically, preserving any deployment-provided file symlink.
-            _settingsPath = file.LinkTarget is null ? file.FullName : file.ResolveLinkTarget(true)!.FullName;
-        }
+        _settings = settingsPath is null ? null : new IdentitySettingsFile(settingsPath);
         var configured = JsonSerializer.SerializeToNode(new { SessionBindingKeys = initialKeys, Applications = initialApplications })!.AsObject();
         // A persisted revocation must also disable credentials supplied by another configuration provider.
         foreach (var pair in initialApplications ?? [])
             if (pair.Value.Status == IdentityRecordStatus.Revoked) configured[KeysProperty]![pair.Key] = new JsonObject();
         _seed = ReadEntries(configured);
-        if (_settingsPath is not null && File.Exists(_settingsPath))
+        if (_settings is not null && File.Exists(_settings.FilePath))
         {
             _lastContent = ReadContent();
-            var server = Server(Parse(_lastContent), false);
+            var server = Server(IdentitySettingsFile.Parse(_lastContent), false);
             var stored = ReadEntries(server, _seed, useConfiguredMetadata: true);
             _snapshot = Merge(stored);
             TakeOwnership(server);
@@ -63,19 +59,19 @@ public sealed class IdentityApplicationRegistry
 
     public async Task ReloadAsync(CancellationToken cancellationToken = default)
     {
-        if (_settingsPath is null) return;
+        if (_settings is null) return;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var content = ReadContent();
             if (_lastContent is not null && content.AsSpan().SequenceEqual(_lastContent)) return;
-            var server = Server(Parse(content), false);
+            var server = Server(IdentitySettingsFile.Parse(content), false);
             var stored = ReadEntries(server, _seed);
             var next = Merge(stored);
             TakeOwnership(server);
             Volatile.Write(ref _snapshot, next);
             _lastContent = content;
-            _fileSeen |= File.Exists(_settingsPath);
+            _fileSeen |= File.Exists(_settings.FilePath);
         }
         finally { _gate.Release(); }
     }
@@ -145,19 +141,18 @@ public sealed class IdentityApplicationRegistry
     private async Task<IFeedback<T>> MutateAsync<T>(Func<JsonObject, Dictionary<Guid, Entry>, IFeedback<T>> change,
         CancellationToken cancellationToken)
     {
-        if (_settingsPath is null) throw new InvalidOperationException("Application registration requires a writable settings file.");
+        if (_settings is null) throw new InvalidOperationException("Application registration requires a writable settings file.");
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            await using var fileLock = await AcquireFileLockAsync(cancellationToken).ConfigureAwait(false);
-            var root = Parse(ReadContent());
+            await using var fileLock = await _settings.AcquireLockAsync(cancellationToken).ConfigureAwait(false);
+            var root = IdentitySettingsFile.Parse(ReadContent());
             var result = change(root, Merge(ReadEntries(Server(root, false), _seed)));
             if (!result.Status) return result;
             var stored = ReadEntries(Server(root, false), _seed);
             var next = Merge(stored);
             var content = JsonSerializer.SerializeToUtf8Bytes(root, new JsonSerializerOptions { WriteIndented = true });
-            await WriteAtomicAsync(content, cancellationToken).ConfigureAwait(false);
+            await _settings.WriteAtomicAsync(content, cancellationToken).ConfigureAwait(false);
             TakeOwnership(Server(root, false));
             Volatile.Write(ref _snapshot, next);
             _lastContent = content;
@@ -167,49 +162,7 @@ public sealed class IdentityApplicationRegistry
         finally { _gate.Release(); }
     }
 
-    private byte[] ReadContent()
-    {
-        if (_settingsPath is null || !File.Exists(_settingsPath))
-        {
-            if (_fileSeen) throw new IOException("The application settings file is unavailable. The last valid registry remains active.");
-            return "{}"u8.ToArray();
-        }
-        using var stream = new FileStream(_settingsPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        if (stream.Length > 4 * 1024 * 1024) throw new InvalidDataException("The application settings file exceeds the supported size.");
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return buffer.ToArray();
-    }
-
-    private async Task<FileStream> AcquireFileLockAsync(CancellationToken cancellationToken)
-    {
-        var expires = DateTime.UtcNow.AddSeconds(10);
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try { return new FileStream(_settingsPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-            catch (IOException) when (DateTime.UtcNow < expires) { await Task.Delay(50, cancellationToken).ConfigureAwait(false); }
-        }
-    }
-
-    private async Task WriteAtomicAsync(byte[] content, CancellationToken cancellationToken)
-    {
-        var temporary = _settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            var fileOptions = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.WriteThrough };
-            if (!OperatingSystem.IsWindows()) fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-            await using (var output = new FileStream(temporary, fileOptions))
-            {
-                await output.WriteAsync(content, cancellationToken).ConfigureAwait(false);
-                output.Flush(flushToDisk: true);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            if (File.Exists(_settingsPath)) File.Replace(temporary, _settingsPath, null);
-            else File.Move(temporary, _settingsPath!);
-        }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
-    }
+    private byte[] ReadContent() => _settings?.ReadContent(_fileSeen) ?? "{}"u8.ToArray();
 
     private Dictionary<Guid, Entry> Merge(Dictionary<Guid, Entry> stored)
     {
@@ -225,19 +178,6 @@ public sealed class IdentityApplicationRegistry
         // Metadata alone may rely on credentials in User Secrets or environment variables.
         // A saved key ring, including an empty revoked ring, owns the complete credential set.
         foreach (var pair in ObjectProperty(server, KeysProperty)) _managedIds.Add(Guid.Parse(pair.Key));
-    }
-
-    private static JsonObject Parse(byte[] content)
-    {
-        try
-        {
-            var json = content.AsSpan();
-            if (json.StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) json = json[3..];
-            return JsonNode.Parse(json, new JsonNodeOptions { PropertyNameCaseInsensitive = true },
-                new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip }) as JsonObject
-                ?? throw new InvalidDataException("Application settings must be a JSON object.");
-        }
-        catch (JsonException) { throw new InvalidDataException("Application settings contain invalid JSON. The last valid registry remains active."); }
     }
 
     private static JsonObject Server(JsonObject root, bool create)

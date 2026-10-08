@@ -13,6 +13,7 @@ public interface IIdentity
     ValueTask<IFeedback> SetPasswordAsync(Guid userId, SetPasswordRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<OpaqueSession>> AuthenticatePasswordAsync(PasswordAuthenticationRequest request, CancellationToken cancellationToken = default);
+    ValueTask<IFeedback<OpaqueSession>> AuthenticateTotpAsync(TotpAuthenticationRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<OpaqueSession>> CreateApplicationSessionAsync(ApplicationSessionRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<SessionValidation>> ValidateSessionAsync(string token, CancellationToken cancellationToken = default);
     ValueTask<IFeedback> RevokeSessionAsync(string token, CancellationToken cancellationToken = default);

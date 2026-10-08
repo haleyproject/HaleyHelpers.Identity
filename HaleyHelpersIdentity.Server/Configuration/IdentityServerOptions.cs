@@ -17,6 +17,7 @@ public sealed class IdentityServerOptions
     public IdentitySecretOptions SecretProtection { get; set; } = new();
     public IdentityFederationOptions Federation { get; set; } = new();
     public IdentityMfaOptions Mfa { get; set; } = new();
+    public IdentityTotpLoginOptions TotpLogin { get; set; } = new();
     public string PasswordResetPath { get; set; } = "/identity/password/reset";
     public IdentityVerificationOptions Verification { get; set; } = new();
     public Dictionary<string, string[]> AllowedReturnUris { get; set; } = new(StringComparer.OrdinalIgnoreCase);

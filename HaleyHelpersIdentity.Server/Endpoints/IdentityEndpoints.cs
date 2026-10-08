@@ -35,6 +35,12 @@ public static class IdentityEndpoints
             (await identity.ChangePasswordAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ChangePassword", options);
         Configure(group.MapPost("/sessions/password", async (PasswordAuthenticationRequest request, IIdentity identity, CancellationToken ct) =>
             (await identity.AuthenticatePasswordAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "AuthenticatePassword", options);
+        Configure(group.MapPost("/sessions/totp", async (TotpAuthenticationRequest request, HttpContext context, IIdentity identity, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.Pragma = "no-cache";
+            return (await identity.AuthenticateTotpAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult();
+        }), "AuthenticateTotp", options);
         Configure(group.MapPost("/sessions/application", async (ApplicationSessionRequest request, IIdentity identity, CancellationToken ct) =>
             (await identity.CreateApplicationSessionAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "CreateApplicationSession", options);
         Configure(group.MapPost("/sessions/validation", async (SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>

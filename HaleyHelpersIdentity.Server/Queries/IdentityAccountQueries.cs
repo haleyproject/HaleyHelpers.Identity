@@ -24,6 +24,9 @@ internal static class IdentityAccountQueries
     internal const string TouchAccount = """
         UPDATE `user_account` SET `last_auth_at`=@at WHERE `id`=@user;
         """;
+    internal const string LockActiveSessionAccount = """
+        SELECT `id` FROM `user_account` WHERE `id`=@user AND `status`=2 LIMIT 1 FOR UPDATE;
+        """;
     internal const string InsertAccount = """
         INSERT IGNORE INTO `user_account` (`uid`,`status`,`normalized`,`display_name`,`flags`,`created_at`,`modified_at`)
         VALUES (@uid,@status,@email,@display,1,@at,@at) RETURNING `id`;

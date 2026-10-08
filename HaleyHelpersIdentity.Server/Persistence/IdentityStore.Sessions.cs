@@ -9,6 +9,9 @@ public sealed partial class IdentityStore
     {
         if (command.Kind is not (IdentitySessionKind.Opaque or IdentitySessionKind.OwnerManaged) || (command.Kind == IdentitySessionKind.Opaque && command.ApplicationId is null))
             throw new ArgumentException("A valid session protocol and application binding are required.", nameof(command));
+        if (await ScalarAsync<long>(IdentityAccountQueries.LockActiveSessionAccount, load,
+                ("@user", command.LocalUserId)).ConfigureAwait(false) == 0)
+            throw new Haley.Exceptions.SessionRejectedException();
         var id = await ScalarAsync<long>(IdentityAccountQueries.InsertSession, load,
             ("@uid", IdentityDatabase.ToBinary(command.SessionId)), ("@user", command.LocalUserId),
             ("@application", command.ApplicationId is null ? null : IdentityDatabase.ToBinary(command.ApplicationId.Value)),

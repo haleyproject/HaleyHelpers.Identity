@@ -49,6 +49,18 @@ public sealed class VerificationHttpTests
             var authenticated = await remote.CompleteVerificationAsync(new(login.ChallengeId, VerificationPurpose.PasswordlessLogin, login.Verifier, VerificationProofKind.NumericCode));
             Assert.True(authenticated.Status, authenticated.Message); Assert.NotNull(authenticated.Result.Session);
             Assert.True((await remote.ValidateSessionAsync(authenticated.Result.Session.Token)).Status);
+            database.Services.GetRequiredService<IOptions<IdentityServerOptions>>().Value.TotpLogin.Enabled = true;
+            var enrollment = await remote.BeginTotpEnrollmentAsync(new(account.Result.UserId, "Password-free HTTP account"));
+            Assert.True(enrollment.Status, enrollment.Message);
+            var details = await remote.InspectTotpEnrollmentAsync(enrollment.Result.Ticket);
+            var seed = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(details.Result.OtpauthUri).Query)["secret"].ToString();
+            Assert.True((await remote.ConfirmTotpEnrollmentAsync(new(enrollment.Result.Ticket, MfaPersistenceTests.Code(seed, database.Clock.UtcNow)))).Status);
+            database.Clock.UtcNow = database.Clock.UtcNow.AddSeconds(30);
+            var totp = await remote.AuthenticateTotpAsync(new("http@example.test", MfaPersistenceTests.Code(seed, database.Clock.UtcNow)));
+            Assert.True(totp.Status, totp.Message); Assert.True((await remote.ValidateSessionAsync(totp.Result.Token)).Status);
+            Assert.Equal("[\"totp\"]", await database.SqlAsync("SELECT i.auth_methods FROM user_session_info i JOIN user_session s ON s.id=i.session_id WHERE s.uid=@uid",
+                ("@uid", Convert.FromHexString(totp.Result.SessionId.ToString("N")))));
+            Assert.Equal(0L, Convert.ToInt64(await database.SqlAsync("SELECT COUNT(*) FROM credential")));
         }
         finally { ClientStore.RemoveClient(key); }
     }

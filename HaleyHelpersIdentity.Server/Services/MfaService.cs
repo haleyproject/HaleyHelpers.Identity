@@ -166,7 +166,10 @@ public sealed class MfaService(
         var method = await store.FindMfaMethodAsync(request.MethodId.Value, cancellationToken).ConfigureAwait(false);
         if (method is null || method.Method.UserId != request.UserId || method.Method.Status != IdentityRecordStatus.Active || method.SecretEncrypted is null)
             return Fail(IdentityErrorCodes.MfaInvalid);
-        var counter = MatchTotpCounter(method.SecretEncrypted, request.MethodId.Value, request.Code, clock.UtcNow);
+        long? counter;
+        try { counter = MatchTotpCounter(method.SecretEncrypted, request.MethodId.Value, request.Code, clock.UtcNow); }
+        catch (Exception error) when (error is InvalidOperationException or CryptographicException)
+        { return Fail(IdentityErrorCodes.SecretProtectionUnavailable); }
         if (counter is null)
             return Fail(IdentityErrorCodes.MfaInvalid);
         var counterStartedAt = DateTimeOffset.FromUnixTimeSeconds(counter.Value * 30);

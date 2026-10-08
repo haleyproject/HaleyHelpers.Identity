@@ -429,6 +429,7 @@ FodyWeavers.xsd
 *.msp
 
 # Local Identity build and verification output
+**/appsettings*.json.lock
 HaleyIdentityHost/wwwroot/admin/
 HaleyIdentityHost/State/
 HaleyIdentityHost/Keys/
