@@ -21,6 +21,7 @@
     <None Include="wwwroot/admin/**/*" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
     <Folder Include="wwwroot/" />
     <None Update="*.container;podman.cfile" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../nginx-haley-identity.conf" Link="nginx-haley-identity.conf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

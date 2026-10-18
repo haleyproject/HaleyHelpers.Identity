@@ -61,11 +61,29 @@ Run `systemctl daemon-reload`, then `systemctl start haley-identity.service`. Us
 
 The Svelte console loads `identity-admin.config.json` from the same browser directory as its page. Edit `HaleyIdentityAdmin.Web/public/identity-admin.config.json` before building, or `Config/identity-admin.config.json` in the deployed Config volume. The default `basePath` is `/admin/` and `apiBasePath` is `api`, producing `/admin/api` requests. Like Kida's admin configuration, these are public browser paths, not the container address.
 
-For example, when the public page is `/identity/admin/` and the proxy strips `/identity/` before forwarding to the host, set `basePath` to `/identity/admin/` and leave `apiBasePath` as `api`. The browser then requests `/identity/admin/api`, which the proxy forwards to `/admin/api`. Map the entire directory so its JavaScript, CSS and configuration file are available too. If `basePath` is omitted, the frontend uses the page's directory automatically. An `apiBasePath` starting with `/` specifies an absolute path on the same origin instead of being joined to `basePath`.
+For this deployment, the public console is `/hi-admin/`. Set `basePath` to `/hi-admin/` and leave `apiBasePath` as `api` in the Config volume's `identity-admin.config.json`. The browser then requests `/hi-admin/api`, which the proxy forwards to `/admin/api`. Map the entire directory so its JavaScript, CSS and configuration file are available too. If `basePath` is omitted, the frontend uses the page's directory automatically. An `apiBasePath` starting with `/` specifies an absolute path on the same origin instead of being joined to `basePath`.
 
 Vite keeps JavaScript and CSS URLs relative (`base: './'`), so those files work under a proxy prefix without rebuilding. The runtime JSON controls API requests after the JavaScript loads; it cannot repair an incorrect page URL or a missing asset mapping. Open the console at a directory URL ending in `/`, such as `/admin/`. When the proxy gives that directory a different name, configure its slashless public URL to redirect to the public URL with the trailing slash.
 
-If a TLS reverse proxy is used, set `Haley:Identity:TrustedProxies` to its actual IP addresses so forwarded HTTPS and source addresses are honored. Loopback proxies are trusted by the framework default. Route the admin UI only through your administration boundary. If external providers need public callbacks, expose only the two exact `/identity/federation/...` callback routes, not the trusted `/api/identity` routes.
+If a TLS reverse proxy is used, set `Haley:Identity:TrustedProxies` to its actual source IP addresses as seen inside the container so forwarded HTTPS and source addresses are honored. This can be the host's Podman gateway address. Loopback proxies are trusted by the framework default. Route the admin UI only through your administration boundary. External identity-provider callbacks require their own mappings for the exact `/identity/federation/...` callback routes.
+
+### Application API from another server
+
+The solution includes `nginx-haley-identity.conf`, also copied into the host's build and publish output. Include it inside your existing HTTPS Nginx `server` block on the container host. Replace any earlier Haley location blocks rather than defining the same locations twice. Keep the Quadlet's published upstream at `127.0.0.1:7430`; Nginx supplies the externally reachable HTTPS entry point.
+
+The snippet maps these public paths:
+
+| Public path | Haley upstream path |
+| --- | --- |
+| `/hi-api/` | `http://127.0.0.1:7430/api/identity/` |
+| `/hi-admin/` | `http://127.0.0.1:7430/admin/` |
+| `/hi-admin/identity/verify/` | `http://127.0.0.1:7430/identity/verify/` |
+
+The application mapping enables authorized backends on other servers to call Haley over HTTPS. Configure the calling backend's existing `Haley:Identity` section with `Url` set to `base=https://identity.example.com/;` using your actual hostname, and `ApiPath` set to `hi-api`. Keep the `ApplicationId`, `SessionKeyId` and `SessionBindingSecret` issued by Cred. These belong in the backend configuration. The SDK sends its generated application authentication headers on every application API request; the proxy preserves them. The browser's `apiBasePath` remains `api` and is separate from this SDK `ApiPath` setting.
+
+For example, `FindAccountAsync` reaches `/hi-api/accounts/resolve`, which Nginx forwards to `/api/identity/accounts/resolve`. Upstream validation, authentication and error responses remain intact. The application proxy does not map the management `/admin/api` routes. The verification mapping also keeps generated recipient links working under `/hi-admin/`.
+
+If the calling backend has an outbound HTTP proxy, include your Identity hostname in its `no_proxy` exceptions when that hostname should be reached directly. Validate the configuration with `nginx -t`, then reload Nginx. Restart Haley if you change its trusted-proxy configuration.
 
 ## Kida
 
