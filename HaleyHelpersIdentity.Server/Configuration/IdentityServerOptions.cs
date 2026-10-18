@@ -10,7 +10,13 @@ public sealed class IdentityServerOptions
     public int PasswordHistoryCount { get; set; } = 5;
     public int MaximumFailedAttempts { get; set; } = 5;
     public int LockoutSeconds { get; set; } = 900;
-    public string IssuerLabel { get; set; } = "Haley Identity";
+    private string _issuerLabel = "Haley Identity";
+    /// <summary>Hosting identity's display name in authenticator entries and the admin console, independent of any calling application.</summary>
+    public string IssuerLabel
+    {
+        get => _issuerLabel;
+        set => _issuerLabel = string.IsNullOrWhiteSpace(value) ? "Haley Identity" : value.Trim();
+    }
     public string MfaEnrollmentPath { get; set; } = "/identity/mfa/enroll";
     public string MfaProtectionPurpose { get; set; } = "haley.identity.mfa.totp";
     public string EventPrefix { get; set; } = "haley.identity";

@@ -39,6 +39,14 @@ The entered email is a routing hint. It is not forwarded as authenticated identi
 
 The standalone/shared facade returns an `OpaqueSession`. The native Kida OAuth endpoint returns `FederatedIdentityResult` with Kida access/refresh tokens. A Kida foundation call returns the shared opaque session with Kida client/resource ownership. A user subject is never allowed to bypass a locked, suspended, retired or password-change-required account.
 
+## Resolving the authenticated session subject
+
+Applications receiving an opaque federation session can call `IIdentity.ResolveSessionAsync(token)`, exposed as `POST /api/identity/sessions/resolution`. Send the token only in the JSON body with the application's normal binding headers. The response contains the public session/user IDs, expiry, display name, current email verification state, lifecycle status and recorded authentication methods. It does not include the token or internal database IDs.
+
+The query requires an active, unexpired opaque session owned by the calling application and an active account. The owner's session-authority extensions are rechecked. A foreign application, disabled application/account, revoked token or expired session cannot obtain its subject. Existing `ValidateSessionAsync` keeps its minimal session-ID/expiry response.
+
+Applications must use this authenticated subject for corporate provisioning. An email/domain entered for provider discovery remains only a routing hint. Creating application membership after federation does not authorize changing an existing disabled account or elevating its application roles.
+
 ## Signed callback contract
 
 Register a provider with protocol `SignedCallback`. Its JSON configuration contains:

@@ -45,6 +45,8 @@ public static class IdentityEndpoints
             (await identity.CreateApplicationSessionAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "CreateApplicationSession", options);
         Configure(group.MapPost("/sessions/validation", async (SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>
             (await identity.ValidateSessionAsync(body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ValidateSession", options);
+        Configure(group.MapPost("/sessions/resolution", async (SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>
+            (await identity.ResolveSessionAsync(body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ResolveSession", options);
         Configure(group.MapDelete("/sessions", async ([FromBody] SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>
             (await identity.RevokeSessionAsync(body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "RevokeSession", options);
         Configure(group.MapPost("/login-attempts/search", async (UserLoginAttemptSearchRequest request, IIdentity identity, CancellationToken ct) =>
@@ -79,6 +81,9 @@ public static class IdentityEndpoints
             Configure(group.MapPost($"/verification/{segment}/challenges", async (BeginIdentityVerificationRequest request, IIdentity identity, CancellationToken ct) =>
                 request.Purpose != purpose ? Results.Problem(statusCode: 400, detail: "The purpose must match this route.") :
                     (await identity.BeginVerificationAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), IdentityVerificationRoutes.Operation(purpose, false), options);
+            Configure(group.MapPost($"/verification/{segment}/inspection", async (InspectIdentityVerificationRequest request, IIdentity identity, CancellationToken ct) =>
+                request.Purpose != purpose ? Results.Problem(statusCode: 400, detail: "The purpose must match this route.") :
+                    (await identity.InspectVerificationAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), IdentityVerificationRoutes.Operation(purpose, true), options);
             Configure(group.MapPost($"/verification/{segment}/completion", async (CompleteIdentityVerificationRequest request, IIdentity identity, CancellationToken ct) =>
                 request.Purpose != purpose ? Results.Problem(statusCode: 400, detail: "The purpose must match this route.") :
                     (await identity.CompleteVerificationAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), IdentityVerificationRoutes.Operation(purpose, true), options);
@@ -93,6 +98,7 @@ public static class IdentityEndpoints
             (await federation.CompleteExternalAsync(request, ct)).ToMinimalApiResult()), "CompleteExternalFederation", options);
         Configure(group.MapPost("/federation/handoffs", async (RedeemFederationHandoffRequest request, [FromServices] IIdentityFederation federation, CancellationToken ct) =>
             (await federation.RedeemAsync(request, ct)).ToMinimalApiResult()), "RedeemFederation", options);
+        endpoints.MapIdentityRecipientCompletion(prefix);
         return group;
     }
 

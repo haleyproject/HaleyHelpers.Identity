@@ -1,5 +1,47 @@
 # Verification workflows
 
+## Admin generation and recipient pages
+
+In Haley or Kida Admin, open **Identity → Verification & onboarding**. Select the application (and Kida resource), the existing account email, purpose, OTP or opaque-token proof, and expiry. Generate the challenge, then copy its recipient link. For OTP, deliver the code separately. The identity host does not send email; your email engine can deliver the exact link displayed in the console. Generation remains behind the administration session and CSRF boundary.
+
+The form loads active email contacts recorded on the selected account, including accounts whose login username is not an email address. Choose the intended mailbox from that list. A missing application/audience or contact is explained beside the disabled generation button. The email-contact lookup is management-only; public recipient pages do not expose account contact lists.
+
+The shared recipient page is `/identity/verify/` in Haley Identity Host, Kida Service, and Kida Admin. Kida Admin obtains the same assets from its private Service connection, rather than exposing administration credentials or copying the verification engine. The recipient needs no administrator login. GET renders the page and assets; only explicit form submission attempts completion. Proofs remain bound to their original application, email, purpose and context, with expiry, attempt limits and one-use consumption.
+
+Set `Haley:Identity:Server:Verification:PageUrl` or `Kida:Identity:Verification:PageUrl` to a public identity-hosted page when desired. `Verification:ApplicationPageUrls:<application-guid>` can select a public application-hosted page for that application's links. Blank values use the current identity-hosted page. The admin form can override the recipient-page URL for a particular delivery. Host configuration changes require a restart.
+
+For private identity deployments, the recipient URL must belong to the public application. Its backend calls private Identity using the same completion contract and its configured credentials. The fragment contains the proof metadata; it is removed from browser history after the page opens and is never sent in a GET request. All proof submissions use POST bodies. Do not put an application binding secret or OAuth client secret in the link or browser.
+
+Applications can reuse the page with `MapIdentityVerificationProxyEndpoints` from `Haley.Helpers.Identity.Server`, after registering their existing embedded/remote `IIdentity` client. This mapping only serves page assets and delegates completion; it does not register a database engine. Configure a rate-limit policy, the fixed application GUID and resource:
+
+```csharp
+// Register IIdentity with AddHaleyIdentity(...).UseRemote() or UseKida(...) first.
+builder.Services.AddAdminLoginRateLimit("verification", 30);
+// After building the application:
+app.UseRateLimiter();
+app.MapIdentityVerificationProxyEndpoints(applicationId, "haley.identity", "verification");
+```
+
+Use `haley.identity` for standalone Haley, or the configured product audience for Kida. Import `Haley.Extensions` and `Haley.Utils`. A link identifying another application or resource is rejected before the backend client is called. The page assets and completion endpoint use relative paths and work under a reverse-proxy prefix; use a page-directory URL with its trailing slash.
+
+With a remote backend, the proxy uses the bound recipient-completion route without transmitting binding secrets or requesting machine-token scopes. Issuance and normal account APIs retain their existing authentication requirements. The identity server still checks active application/resource authority and the original one-time proof. `CompleteVerificationAsync` remains available as the authenticated application API.
+
+Programmatic callers can use `IdentityVerificationLinks.Create(pageUrl, applicationId, resource, delivery, context, requiresPassword)` to produce the same link from an existing `BeginVerificationAsync` delivery. Opaque links carry the verifier in their fragment. OTP links carry the challenge metadata and ask the recipient for the separately delivered code. Preserve the original Context exactly at completion.
+
+If an identity host is selectively published, expose only `/identity/verify/` and its assets/completion routes through the proxy. Keep `/admin/api`, management sessions and trusted application APIs inside their intended boundary. Applications that use passwordless-login links retain responsibility for establishing their own product cookies/sessions after proof completion.
+
+Email verification preserves account status. Onboarding can activate a pending account, and password recovery updates its password. No additional tables or schema migrations are required.
+
+## Administrative email ownership
+
+The account Overview shows every recorded email and its Verified/Unverified state. In Verification, the standalone console offers **Break-glass verify** and **Mark unverified**, with a required reason and confirmation. These actions require the administrator session and antiforgery token, but no application selection or email proof. Break-glass verify also repairs a verified contact whose recovery flag is disabled. Mark unverified disables recovery and invalidates outstanding challenges and unconsumed grants for that mailbox. Both actions record an outbox attestation and preserve account lifecycle state.
+
+An already verified email can receive another **Verify email** challenge to simulate the ceremony. Passwordless sign-in requires an Active account, a verified recovery-enabled email and no required password change; password recovery additionally requires an existing password. Verifying email alone does not activate a Pending account. Administrator challenge issuance explains these eligibility failures; normal application issuance retains its enumeration-safe acknowledgement.
+
+The management operation is `PUT /admin/api/verification/accounts/{userId}/email-contacts/{contactId}/verification`, with `isVerified` and `reasonCode`. No database schema migration is required.
+
+## Application API workflows
+
 `AddHaleyIdentity` exposes the same `IIdentity` operations with `UseEmbedded`, `UseRemote`, or `UseKida`. Import `Haley.Models` for the request records and numeric enums. Password login, TOTP, recovery codes, email login, email verification, onboarding and password reset belong to the shared engine. Kida retains its authorization, MFA policy and OAuth token behavior.
 
 ## Create an unverified pending account

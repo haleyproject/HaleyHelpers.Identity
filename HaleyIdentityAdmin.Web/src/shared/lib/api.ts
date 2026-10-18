@@ -1,5 +1,6 @@
 import type { AdminSession, AdminTotpEnrollment, BulkPasswordResetResponse, BulkUserImportResponse, BulkUserImportRowResult, IdentityClientPolicy, IdentityOperationalArea, IdentityOperationalPage, IdentityOperationalRecord, IdentityProvider, IdentityStatus, LoginProtectionPolicy, MfaDomainRule, MfaMethod, OAuthClient, OAuthClientPage, OAuthClientType, SamlCertificate, Section, TotpEnrollmentCompletion, UserActivityFilter, UserIdentity, UserIdentityPage, UserLoginAttempt, UserLoginAttemptPage, UserMfaPolicyOverride, UserProfile, UserSession, UserSessionPage, UserSortOrder } from './types';
 import { RecordStatus } from './statuses';
+import type { IdentityWorkflowContext, IdentityWorkflowOperation, IdentityWorkflowSettings, IdentityWorkflowApplicationPage, BeginWorkflowVerification, VerificationInitiation, VerificationLink } from './types';
 import type { RegisteredIdentityApplication, IdentityApplicationCredential } from './types';
 
 
@@ -50,10 +51,54 @@ function ensureSameOriginPath(name: string, value: string): string {
 }
 
 export class IdentityAdminApi {
+  workflowSettings(): Promise<IdentityWorkflowSettings> { return this.request('verification/settings'); }
+  async workflowApplications(_page = 1): Promise<IdentityWorkflowApplicationPage> {
+    const applications = await this.identityApplications();
+    return { applications: applications.map(application => ({ applicationId: application.applicationId,
+      name: application.displayName, code: application.applicationId, status: application.status,
+      resources: application.keyIds.length ? ['haley.identity'] : [] })), page: 1, hasNext: false };
+  }
+  runIdentityWorkflow<T>(context: IdentityWorkflowContext, operation: IdentityWorkflowOperation, body: unknown): Promise<T> {
+    return this.request(`identity/workflows/${encodeURIComponent(context.applicationId)}/${encodeURIComponent(context.resource)}/${operation}`, { method: 'POST', body });
+  }
+  async beginWorkflowVerification(context: IdentityWorkflowContext, request: BeginWorkflowVerification, pageUrl?: string): Promise<VerificationInitiation> {
+    const receipt = await this.request<{ delivery: NonNullable<VerificationInitiation['delivery']>; link: string }>('verification/challenges',
+      { method: 'POST', body: { applicationId: context.applicationId, request, pageUrl: pageUrl ?? new URL('../identity/verify/', window.location.href).href } });
+    return { accepted: true, delivery: receipt.delivery, link: receipt.link };
+  }
+  verificationPageUrl(pageUrl?: string): URL {
+    const url = new URL(pageUrl?.trim() || '../identity/verify/', new URL('.', window.location.href));
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.hash)
+      throw new Error('Use an HTTP(S) verification page URL without credentials or a fragment.');
+    return url;
+  }
+  verificationLink(link: VerificationLink, pageUrl?: string): string {
+    const url = this.verificationPageUrl(pageUrl);
+    url.hash = new URLSearchParams({ proof: JSON.stringify(link) }).toString();
+    return url.href;
+  }
+  userAccount(userId: string): Promise<UserIdentity> { return this.request(`users/${encodeURIComponent(userId)}`); }
+  userEmailContacts(userId: string): Promise<import('./types').AccountEmailContact[]> {
+    return this.request(`verification/accounts/${encodeURIComponent(userId)}/email-contacts`);
+  }
+  setEmailVerification(userId: string, contactId: string, isVerified: boolean, reasonCode: string): Promise<void> {
+    return this.request(`verification/accounts/${encodeURIComponent(userId)}/email-contacts/${encodeURIComponent(contactId)}/verification`,
+      { method: 'PUT', body: { isVerified, reasonCode } });
+  }
+  updateUserProfile(userId: string, profile: Omit<UserProfile, 'userId' | 'modifiedAt'>): Promise<UserProfile> {
+    return this.request(`users/${userId}/profile`, { method: 'PUT', body: profile });
+  }
+  replaceUserRecoveryCodes(userId: string, count: number): Promise<{ codes: string[] }> {
+    return this.request(`users/${userId}/mfa/recovery-codes`, { method: 'POST', body: { userId, count } });
+  }
+  verifyUserMfa(userId: string, kind: 'Totp' | 'RecoveryCode', code: string, methodId?: string): Promise<void> {
+    return this.request(`users/${userId}/mfa/verification`, { method: 'POST', body: { userId, kind, code, methodId } });
+  }
   title = 'Identity Administration';
   readonly extended: boolean;
   private readonly configFile: string;
   private readonly defaultTitle: string;
+  private configuredTitle = '';
   constructor(extended = false) { this.extended = extended; this.configFile = extended ? 'kida-admin.config.json' : 'identity-admin.config.json'; this.defaultTitle = extended ? 'Auth Intelligence Overview' : 'Identity Administration'; this.title = this.defaultTitle; this.apiRoot = joinPath(this.basePath, extended ? "admin/api" : "api"); }
   private csrf = '';
   private basePath = documentBasePath();
@@ -61,6 +106,7 @@ export class IdentityAdminApi {
 
   async configure(): Promise<void> {
     this.title = this.defaultTitle;
+    this.configuredTitle = '';
     const configUrl = new URL('./' + this.configFile, window.location.href).toString();
     try {
       const response = await fetch(configUrl, {
@@ -72,7 +118,8 @@ export class IdentityAdminApi {
 
       const config = await response.json() as AdminRuntimeConfig;
       if (typeof config.title === 'string' && config.title.trim()) {
-        this.title = config.title.trim();
+        this.configuredTitle = config.title.trim();
+        this.title = this.configuredTitle;
       }
       const configuredBasePath = config.basePath === undefined
         ? this.basePath
@@ -93,12 +140,17 @@ export class IdentityAdminApi {
   async session(): Promise<AdminSession> {
     const session = await this.request<AdminSession>('session');
     this.csrf = session.antiforgeryToken;
+    const identityName = session.identityName?.trim();
+    const defaultIdentityName = this.extended ? 'Kida' : 'Haley Identity';
+    this.title = this.configuredTitle || (identityName && identityName !== defaultIdentityName
+      ? identityName + ' Administration' : this.defaultTitle);
     return session;
   }
 
   identityApplications(): Promise<RegisteredIdentityApplication[]> {
     return this.request('applications');
   }
+
 
   registerIdentityApplication(displayName: string, applicationId?: string): Promise<IdentityApplicationCredential> {
     return this.request('applications', { method: 'POST', body: { displayName, applicationId } });
@@ -242,6 +294,10 @@ export class IdentityAdminApi {
 
   retireUserMfaMethod(userId: string, methodId: string): Promise<void> {
     return this.request(`users/${userId}/mfa/${methodId}`, { method: 'DELETE' });
+  }
+
+  pruneUnusedUserMfaMethods(userId: string): Promise<number> {
+    return this.request(`users/${userId}/mfa/unused`, { method: 'DELETE' });
   }
 
   userMfaPolicyOverrides(userId: string): Promise<UserMfaPolicyOverride[]> {

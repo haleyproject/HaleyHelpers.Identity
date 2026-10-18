@@ -31,6 +31,7 @@ Registration, rotation and reactivation return `applicationId`, `sessionKeyId` a
 | `AuthenticatePasswordAsync` | POST | `sessions/password` |
 | `AuthenticateTotpAsync` | POST | `sessions/totp` |
 | `CreateApplicationSessionAsync` | POST | `sessions/application` |
+| `ResolveSessionAsync` | POST | `sessions/resolution` |
 | `ValidateSessionAsync` | POST | `sessions/validation` |
 | `RevokeSessionAsync` | DELETE | `sessions` |
 | `ListLoginAttemptsAsync` | POST | `login-attempts/search` |
@@ -51,6 +52,12 @@ Registration, rotation and reactivation return `applicationId`, `sessionKeyId` a
 
 Successful operations return their result payload or 204. Failures use ProblemDetails with useful detail and a stable code; the SDK converts this to Haley Feedback. The server never serializes password hashes, protection-key material or internal numeric row identifiers. MFA enrollment data, reset delivery material and newly issued opaque tokens are intentionally sensitive one-time results for the trusted application.
 
+## Management-only MFA cleanup
+
+`IMfaService.PruneUnusedMethodsAsync(userId)` removes all eligible methods for one account and returns their count. The standalone management route is `DELETE /admin/api/users/{userId}/mfa/unused`; Kida exposes `DELETE /internal/admin/users/{userId}/mfa/unused` through its protected administration proxy. Successful responses contain a JSON integer, including zero when nothing is eligible. These routes are not exposed through the application `IIdentity` API or delegated MFA scopes.
+
+Eligibility is checked atomically in persistence: status must be Retired (4), `verified_at` and `last_used_at` must both be null, and no other enrollment may reference the method as its replacement. Enrollment confirmation counts as use. Active, pending, confirmed, previously used and referenced methods are retained. Existing foreign keys remove the deleted method's secret data, enrollment ticket and Kida enrollment context. Management authorization and the existing browser CSRF boundary apply; no schema migration is required.
+
 ## Kida scope mapping
 
 | Operation group | Required scope |
@@ -66,6 +73,14 @@ Successful operations return their result payload or 204. Failures use ProblemDe
 | List accounts, update profiles/status/passwords, inspect login attempts, release locks | `identity.users.manage` |
 
 These are machine scopes on the Kida service API. Every request also verifies current client authority for the requested application resource. Registering the 1.4.0 Identity scope catalog does not add grants to existing clients. An application's assertion is accepted only with the dedicated session-issuance privilege; a machine token without that privilege cannot skip password login.
+
+## Hosted verification
+
+The shared public recipient page is `GET /identity/verify/`, with same-origin `verification.js` and `verification.css`. `POST /identity/verify/{applicationId}/{resource}/completion` accepts `CompleteIdentityVerificationRequest` and validates the one-use proof through the same engine. It does not expose issuance or management operations. See [verification hosting and application reuse](VERIFICATION.md).
+
+An API-prefix alias, `POST {identity-api-prefix}/verification/recipient/{applicationId}/{resource}/completion`, allows the application-hosted page to use its existing remote transport without a binding secret or machine token. This is proof completion only; the normal application APIs retain their authentication and scope checks.
+
+Standalone administration adds protected `GET /admin/api/verification/settings` and `POST /admin/api/verification/challenges`. The latter accepts `{ applicationId, request: BeginIdentityVerificationRequest, pageUrl }` and returns `{ delivery, link }` once. Only an active registered application can be selected. The admin page uses the management cookie and CSRF protection.
 
 ## Primary authenticator login
 

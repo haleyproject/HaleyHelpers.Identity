@@ -4,6 +4,23 @@ namespace Haley.Services;
 public sealed class IdentityAdministrationService(IdentityStore store, IdentityService identity, IMfaService mfa,
     IPasswordHasher hasher, IIdentityUuidGenerator uuids, IIdentityClock clock)
 {
+    public ValueTask<IReadOnlyCollection<AccountEmailContact>> EmailContactsAsync(Guid userId, CancellationToken ct) =>
+        store.ListAccountEmailContactsAsync(userId, ct);
+
+    public async ValueTask<IFeedback> SetEmailVerificationAsync(Guid userId, Guid contactId, AdminEmailVerificationAction request,
+        string? operatorName, CancellationToken ct)
+    {
+        if (userId == Guid.Empty || contactId == Guid.Empty || !ValidReason(request.ReasonCode) || operatorName?.Length > 200)
+            return new Feedback(false, "An account, email contact and reason of at most 100 characters are required.")
+                { Key = "invalid_request", Code = 400 };
+        if (!await store.SetEmailVerificationAsync(new(userId, contactId, request.IsVerified, request.ReasonCode.Trim(),
+            clock.UtcNow, operatorName), ct).ConfigureAwait(false))
+            return new Feedback(false, "The email contact does not belong to this account, is retired, or the account is retired.")
+                { Key = "email_contact_unavailable", Code = 409 };
+        return new Feedback(true, request.IsVerified ? "Email verified by administrative attestation; recovery is enabled."
+            : "Email marked unverified; recovery and outstanding email proofs have been disabled.");
+    }
+
     public ValueTask<IFeedback<UserIdentity>> CreateAsync(CreateLocalUserRequest request, CancellationToken ct) =>
         LocalAccountRegistration.CreateAsync(request, hasher, uuids, clock, store.CreateLocalUserAsync, ct);
 

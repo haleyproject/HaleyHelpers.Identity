@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Account verification</title><link rel="stylesheet" href="./verification.css"><script src="./verification.js" defer></script></head>
+<body><main><section class="card"><p class="eyebrow">Account verification</p><h1 id="heading">Verify your email</h1><p id="description">Opening your verification link...</p><p id="error" class="error" role="alert" hidden></p><form id="verification" hidden>
+<label id="code-field" hidden>Email code<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="20"></label>
+<fieldset id="password-fields" hidden><label>New password<input id="password" type="password" autocomplete="new-password" minlength="9" maxlength="1024"></label><label>Confirm password<input id="confirmation" type="password" autocomplete="new-password" maxlength="1024"></label></fieldset>
+<fieldset id="mfa-fields" hidden><legend>Second factor, if required by your application</legend><label>Method<select id="mfa-kind"><option value="Totp">Authenticator</option><option value="RecoveryCode">Recovery code</option></select></label><label>Code<input id="mfa-code" type="password" autocomplete="off" maxlength="128"></label></fieldset>
+<button id="submit" type="submit">Confirm verification</button></form><p id="success" class="success" role="status" hidden></p></section></main></body></html>

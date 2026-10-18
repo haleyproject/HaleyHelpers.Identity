@@ -215,7 +215,7 @@ internal static class IdentityUserQueries
 
 
     internal const string OVERRIDE_EMAIL_VERIFICATION =
-        $"UPDATE `contact_method` SET `verified_at`={AT} WHERE `id`={ID} AND `verified_at` IS NULL;";
+        $"UPDATE `contact_method` SET `verified_at`=COALESCE(`verified_at`,{AT}),`flags`=`flags` | 2 WHERE `id`={ID};";
 
 
     internal const string SET_PASSWORD_CHANGE_REQUIRED = $"""

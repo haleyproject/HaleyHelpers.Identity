@@ -23,6 +23,7 @@ export interface AdminSession {
   authenticated: boolean;
   passwordConfigured: boolean;
   antiforgeryToken: string;
+  identityName?: string;
 }
 
 export interface UserIdentity {
@@ -276,3 +277,41 @@ export interface UserMfaPolicyOverride {
   modifiedAt: string;
 }
 
+
+export type IdentityWorkflowView = 'verification' | 'recovery' | 'authentication' | 'profile';
+export type IdentityWorkflowOperation = 'accounts/resolve' | 'accounts' | 'email/status' | 'verification/challenges' | 'verification/completion' | 'password/change' | 'sessions/password' | 'sessions/totp' | 'sessions/application' | 'sessions/validation' | 'sessions/revocation';
+export enum VerificationPurpose { EmailVerification = 1, Onboarding = 2, PasswordReset = 4, PasswordlessLogin = 8 }
+export enum VerificationProofKind { LinkToken = 1, NumericCode = 2 }
+export interface IdentityWorkflowContext { applicationId: string; resource: string; }
+export interface IdentityWorkflowSettings {
+  pageUrl?: string;
+  applicationPageUrls?: Record<string, string>;
+  codeLength: number; codeValiditySeconds: number; maximumCodeValiditySeconds: number;
+  activationLinkSeconds: number; maximumTokenValiditySeconds: number; resendDelaySeconds: number;
+  maximumAttempts: number; enabled: boolean; applicationIds: string[];
+  minimumPasswordLength: number; maximumPasswordLength: number;
+}
+export interface EmailVerificationInfo { userId: string; email: string; verifiedAt: string | null; recoveryEnabled: boolean; isVerified: boolean; }
+export interface AccountEmailContact { contactId: string; email: string; verifiedAt: string | null; isVerified: boolean; recoveryEnabled: boolean; }
+export interface VerificationDelivery {
+  challengeId: string; purpose: VerificationPurpose; proofKind: VerificationProofKind;
+  destination: string; verifier: string; expiresAt: string; resendAllowedAt: string;
+}
+export interface VerificationInitiation { accepted: boolean; delivery: VerificationDelivery | null; link?: string; }
+export interface UserOpaqueSession { sessionId: string; token: string; expiresAt: string; }
+export interface UserSessionValidation { sessionId: string; expiresAt: string; }
+export interface VerificationCompletion {
+  userId: string; purpose: VerificationPurpose; emailVerified: boolean; accountStatus: number; session: UserOpaqueSession | null;
+}
+export interface VerificationSubmission {
+  challengeId: string; purpose: VerificationPurpose; proofKind: VerificationProofKind; verifier: string;
+  context: string; newPassword?: string; mfaKind?: 'Totp' | 'RecoveryCode'; mfaMethodId?: string; mfaCode?: string;
+}
+export interface VerificationLink extends IdentityWorkflowContext {
+  clientId?: string; challengeId: string; purpose: VerificationPurpose; proofKind: VerificationProofKind; context: string;
+  email: string; expiresAt: string; verifier?: string; requiresPassword: boolean;
+}
+
+export interface IdentityWorkflowApplication { applicationId: string; name: string; code: string; status: number; resources: string[]; }
+export interface IdentityWorkflowApplicationPage { applications: IdentityWorkflowApplication[]; page: number; hasNext: boolean; }
+export interface BeginWorkflowVerification { email: string; purpose: VerificationPurpose; proofKind: VerificationProofKind; validitySeconds: number; context: string; }

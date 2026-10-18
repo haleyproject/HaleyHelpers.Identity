@@ -37,7 +37,7 @@
   <div class="ambient ambient-two"></div>
   <section class="login-card">
     <div class="brand-mark"><img src={logo} alt={brand} /></div>
-    <h1>Auth Intelligence</h1>
+    <h1>{brand}</h1>
     <p class="lede">Local administration for identity, access, and platform trust.</p>
 
     {#if passwordConfigured}
@@ -51,7 +51,7 @@
           placeholder="Enter your local passphrase"
         />
         <button class="primary full" type="submit" disabled={busy || !password}>
-          {busy ? 'Verifying…' : 'Enter Auth Intelligence'}
+          {busy ? 'Verifying…' : 'Enter ' + brand}
         </button>
       </form>
     {:else}

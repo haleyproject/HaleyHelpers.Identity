@@ -66,6 +66,17 @@ internal static class IdentityAccountQueries
         WHERE t.`token_hash`=@hash AND s.`application_uid`=@application AND s.`kind`=1
           AND s.`status`=2 AND s.`expires_at`>@at AND u.`status`=2 LIMIT 1;
         """;
+    internal const string ResolveSession = """
+        SELECT s.`uid` AS session_uid,s.`expires_at`,u.`uid` AS user_uid,u.`display_name`,u.`status`,
+               c.`normalized` AS email,c.`verified_at`,i.`auth_methods`
+        FROM `user_session_token` t JOIN `user_session` s ON s.`id`=t.`session_id`
+        JOIN `user_account` u ON u.`id`=s.`user_id`
+        JOIN `user_session_info` i ON i.`session_id`=s.`id`
+        LEFT JOIN `contact_method` c ON c.`user_id`=u.`id` AND c.`kind`='email' AND c.`retired_at` IS NULL
+        WHERE t.`token_hash`=@hash AND s.`application_uid`=@application AND s.`kind`=1
+          AND s.`status`=2 AND s.`expires_at`>@at AND u.`status`=2
+        ORDER BY (c.`normalized`=u.`normalized`) DESC,(c.`verified_at` IS NOT NULL) DESC,c.`id` LIMIT 1;
+        """;
     internal const string RevokeSession = """
         UPDATE `user_session` s JOIN `user_session_token` t ON t.`session_id`=s.`id`
         SET s.`status`=64,s.`ended_at`=COALESCE(s.`ended_at`,@at)

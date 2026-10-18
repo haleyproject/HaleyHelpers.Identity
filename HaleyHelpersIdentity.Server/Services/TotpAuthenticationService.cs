@@ -1,12 +1,15 @@
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haley.Services;
 
 /// <summary>Shared primary authenticator proof, policy, account state and login protection.</summary>
 public sealed class TotpAuthenticationService(IIdentityVerificationStore store, IMfaService mfa,
     IIdentityRecoveryAuthorization authorization, ITotpAuthenticationPolicy policy,
-    IIdentityClock clock, IOptions<IdentityServerOptions> options)
+    IIdentityClock clock, IOptions<IdentityServerOptions> options, ILogger<TotpAuthenticationService>? logger = null)
 {
+    private readonly ILogger<TotpAuthenticationService> _logger = logger ?? NullLogger<TotpAuthenticationService>.Instance;
     public async ValueTask<IFeedback<UserIdentity>> AuthenticateAsync(TotpAuthenticationRequest request,
         Guid applicationId, string? ownerContext = null, CancellationToken cancellationToken = default)
     {
@@ -27,7 +30,7 @@ public sealed class TotpAuthenticationService(IIdentityVerificationStore store, 
         if (subject?.Identity.Status == IdentityStatus.Locked &&
             await store.ReleaseExpiredLoginProtectionAsync(subject.Identity.UserId, clock.UtcNow, cancellationToken).ConfigureAwait(false))
             subject = await store.FindVerificationSubjectAsync(email, cancellationToken).ConfigureAwait(false);
-        if (!CanAuthenticate(subject)) return await RejectAsync(subject, email, applicationId, cancellationToken).ConfigureAwait(false);
+        if (!CanAuthenticate(subject)) return await RejectAsync(subject, email, applicationId, AccountRejectionReason(subject), cancellationToken).ConfigureAwait(false);
         var permitted = await policy.AuthorizeAsync(applicationId, context, subject!, cancellationToken).ConfigureAwait(false);
         if (!permitted.Status)
             return Fail(permitted.Key ?? "authentication_rejected", permitted.Message ?? "Primary authenticator login was rejected.",
@@ -37,6 +40,8 @@ public sealed class TotpAuthenticationService(IIdentityVerificationStore store, 
             .Where(method => method.UserId == subject.Identity.UserId && method.Status == IdentityRecordStatus.Active && method.Kind == MfaKind.Totp)
             .ToArray();
         var verified = false;
+        var secretProtectionFailed = false;
+        var codeReused = false;
         if (methods.Length > 0)
         {
             var candidates = request.Kind == MfaKind.RecoveryCode ? new Guid?[] { null } :
@@ -47,20 +52,45 @@ public sealed class TotpAuthenticationService(IIdentityVerificationStore store, 
                 var proof = await mfa.VerifyAsync(new(subject.Identity.UserId, methodId, request.Kind, request.Code.Trim()), cancellationToken).ConfigureAwait(false);
                 if (!proof.Status)
                 {
-                    if (proof.Key == IdentityErrorCodes.SecretProtectionUnavailable)
-                        return Fail(proof.Key, "Secret protection is unavailable for authenticator verification.", 503);
+                    var reason = proof.Key switch
+                    {
+                        IdentityErrorCodes.SecretProtectionUnavailable => "secret_protection_unavailable",
+                        IdentityErrorCodes.MfaCodeReused => "authenticator_code_reused",
+                        _ => "authenticator_code_or_method_rejected"
+                    };
+                    _logger.LogInformation(
+                        "Primary authenticator proof rejected. ApplicationId={ApplicationId} UserId={UserId} MethodId={MethodId} Reason={Reason}.",
+                        applicationId, subject.Identity.UserId, methodId, reason);
+                    secretProtectionFailed |= proof.Key == IdentityErrorCodes.SecretProtectionUnavailable;
+                    codeReused |= proof.Key == IdentityErrorCodes.MfaCodeReused;
                     continue;
                 }
                 verified = true;
+                _logger.LogInformation(
+                    "Primary authenticator proof accepted. ApplicationId={ApplicationId} UserId={UserId} MethodId={MethodId} Kind={Kind}.",
+                    applicationId, subject.Identity.UserId, methodId, request.Kind);
                 break;
             }
         }
-        if (!verified) return await RejectAsync(subject, email, applicationId, cancellationToken).ConfigureAwait(false);
+        if (!verified)
+        {
+            if (codeReused)
+            {
+                await RecordRejectionAsync(subject, email, applicationId, "authenticator_code_reused", cancellationToken).ConfigureAwait(false);
+                return Fail(IdentityErrorCodes.MfaCodeReused,
+                    "This authenticator code has already been used. Wait for the next code, then try again.", 401);
+            }
+            if (secretProtectionFailed)
+                return Fail(IdentityErrorCodes.SecretProtectionUnavailable,
+                    "The identity server cannot access an enrolled authenticator secret. Check its SecretProtection configuration.", 503);
+            var reason = methods.Length == 0 ? "authenticator_not_configured" : "authenticator_code_mismatch";
+            return await RejectAsync(subject, email, applicationId, reason, cancellationToken).ConfigureAwait(false);
+        }
 
         // Recheck identity after consuming the proof so retirement, lockout or contact changes cannot issue a session.
         var current = await store.FindVerificationSubjectAsync(email, cancellationToken).ConfigureAwait(false);
         if (!CanAuthenticate(current) || current!.Identity.UserId != subject.Identity.UserId || current.ContactId != subject.ContactId)
-            return Fail("invalid_credentials", "The supplied credentials were rejected.", 401);
+            return await RejectAsync(current, email, applicationId, "account_changed_during_verification", cancellationToken).ConfigureAwait(false);
         await store.RecordLoginAttemptAndApplyProtectionAsync(new(current.Identity.UserId, VerificationProofService.Hash(email),
             applicationId, "success", null, null, null, clock.UtcNow), settings.MaximumFailedAttempts,
             settings.LockoutSeconds, cancellationToken).ConfigureAwait(false);
@@ -71,13 +101,40 @@ public sealed class TotpAuthenticationService(IIdentityVerificationStore store, 
         subject is not null && subject.Identity.Status == IdentityStatus.Active && subject.VerifiedAt is not null &&
         !subject.Identity.PasswordChangeRequired;
 
-    private async ValueTask<IFeedback<UserIdentity>> RejectAsync(StoredVerificationSubject? subject, string email,
-        Guid applicationId, CancellationToken cancellationToken)
+    private static string AccountRejectionReason(StoredVerificationSubject? subject) =>
+        subject is null ? "account_not_found"
+        : subject.Identity.Status == IdentityStatus.Locked ? "account_locked"
+        : subject.Identity.Status == IdentityStatus.Pending ? "account_pending"
+        : subject.Identity.Status == IdentityStatus.Retired ? "account_retired"
+        : subject.Identity.Status != IdentityStatus.Active ? "account_inactive"
+        : subject.VerifiedAt is null ? "email_unverified"
+        : subject.Identity.PasswordChangeRequired ? "password_change_required"
+        : "authenticator_rejected";
+
+    private async ValueTask<IFeedback<UserIdentity>> RejectAsync(StoredVerificationSubject? subject,
+        string email, Guid applicationId, string reason, CancellationToken cancellationToken)
     {
-        await store.RecordLoginAttemptAndApplyProtectionAsync(new(subject?.Identity.UserId, VerificationProofService.Hash(email),
-            applicationId, "invalid_credential", "authenticator_rejected", null, null, clock.UtcNow),
+        await RecordRejectionAsync(subject, email, applicationId, reason, cancellationToken).ConfigureAwait(false);
+        var current = subject is null ? null
+            : await store.FindVerificationSubjectAsync(email, cancellationToken).ConfigureAwait(false);
+        if (reason == "email_unverified" && current?.Identity.Status != IdentityStatus.Locked)
+            return Fail(IdentityErrorCodes.EmailUnverified,
+                "Your email address is not verified. Verify your email before signing in with an authenticator.", 403);
+        return current?.Identity.Status == IdentityStatus.Locked
+            ? Fail(IdentityErrorCodes.AccountLocked,
+                "This account is locked after repeated unsuccessful sign-in attempts. Contact your administrator to unlock it.", 423)
+            : Fail("invalid_credentials", "The supplied credentials were rejected.", 401);
+    }
+
+    private async ValueTask RecordRejectionAsync(StoredVerificationSubject? subject, string email,
+        Guid applicationId, string reason, CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            "Primary authenticator login rejected. ApplicationId={ApplicationId} UserId={UserId} Reason={Reason}.",
+            applicationId, subject?.Identity.UserId, reason);
+        await store.RecordLoginAttemptAndApplyProtectionAsync(new(subject?.Identity.UserId,
+            VerificationProofService.Hash(email), applicationId, "invalid_credential", reason, null, null, clock.UtcNow),
             options.Value.MaximumFailedAttempts, options.Value.LockoutSeconds, cancellationToken).ConfigureAwait(false);
-        return Fail("invalid_credentials", "The supplied credentials were rejected.", 401);
     }
 
     private static IFeedback<UserIdentity> Fail(string key, string message, int code) =>

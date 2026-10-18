@@ -42,6 +42,9 @@ public sealed class IdentityRemoteClient(IdentityRemoteTransport transport) : II
     public ValueTask<IFeedback<SessionValidation>> ValidateSessionAsync(string token, CancellationToken cancellationToken = default) =>
         transport.SendAsync<SessionValidation>("ValidateSession", "sessions/validation", Method.POST, new SessionTokenRequest(token), cancellationToken);
 
+    public ValueTask<IFeedback<ResolvedIdentitySession>> ResolveSessionAsync(string token, CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ResolvedIdentitySession>("ResolveSession", "sessions/resolution", Method.POST, new SessionTokenRequest(token), cancellationToken);
+
     public ValueTask<IFeedback> RevokeSessionAsync(string token, CancellationToken cancellationToken = default) =>
         transport.SendAsync("RevokeSession", "sessions", Method.DELETE, new SessionTokenRequest(token), cancellationToken);
 
@@ -89,6 +92,12 @@ public sealed class IdentityRemoteClient(IdentityRemoteTransport transport) : II
             ? transport.SendAsync<IdentityVerificationInitiation>(IdentityVerificationRoutes.Operation(request.Purpose, false),
                 $"verification/{IdentityVerificationRoutes.Segment(request.Purpose)}/challenges", Method.POST, request, cancellationToken)
             : ValueTask.FromResult<IFeedback<IdentityVerificationInitiation>>(new Feedback<IdentityVerificationInitiation>(false, "A single valid purpose is required.") { Key = "invalid_request", Code = 400 });
+
+    public ValueTask<IFeedback<bool>> InspectVerificationAsync(InspectIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        Enum.IsDefined(request.Purpose)
+            ? transport.SendAsync<bool>(IdentityVerificationRoutes.Operation(request.Purpose, true),
+                $"verification/{IdentityVerificationRoutes.Segment(request.Purpose)}/inspection", Method.POST, request, cancellationToken)
+            : ValueTask.FromResult<IFeedback<bool>>(new Feedback<bool>(false, "A single valid purpose is required.") { Key = "invalid_request", Code = 400 });
 
     public ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteVerificationAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
         Enum.IsDefined(request.Purpose)

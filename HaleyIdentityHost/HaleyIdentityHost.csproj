@@ -10,8 +10,11 @@
   <ItemGroup>
     <ProjectReference Include="../HaleyHelpersIdentity.Server/HaleyHelpersIdentity.Server.csproj" />
     <ProjectReference Include="../HaleyIdentity.Cred/HaleyIdentity.Cred.csproj" />
+    <Content Update="appsettings.local.json">
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
     <!-- Supply deployment appsettings.json separately; do not publish local settings. -->
-    <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.json" CopyToPublishDirectory="PreserveNewest" />
     <!-- Vite owns these files. Publish adds them explicitly after the frontend build. -->
     <Content Remove="wwwroot/admin/**/*;wwwroot/.gitkeep" />
     <None Remove="wwwroot/admin/**/*" />

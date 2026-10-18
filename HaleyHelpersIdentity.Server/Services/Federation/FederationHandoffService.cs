@@ -52,7 +52,7 @@ public sealed class FederationHandoffService(IIdentityFederationStore store, IId
         if (linked.Identity.Status != IdentityStatus.Active || linked.Identity.PasswordChangeRequired)
             return Fail(IdentityErrorCodes.FederationRejected);
         var factors = await mfa.VerifyAsync(new(linked.Identity.UserId, linked.Identity.Username ?? string.Empty, request.ApplicationId,
-            context, request.MfaKind, request.MfaMethodId, request.MfaCode), cancellationToken).ConfigureAwait(false);
+            context, request.MfaKind, request.MfaMethodId, request.MfaCode, request.RequireMfa), cancellationToken).ConfigureAwait(false);
         if (!factors.Status) return Fail(factors.Key ?? IdentityErrorCodes.MfaInvalid);
         // A failed factor does not burn the handoff. Only one concurrent successful redemption can consume it.
         var consumed = await store.ConsumeFederationHandoffAsync(request.ApplicationId, codeHash, challenge, clock.UtcNow, cancellationToken).ConfigureAwait(false);

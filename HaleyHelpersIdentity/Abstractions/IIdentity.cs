@@ -16,6 +16,7 @@ public interface IIdentity
     ValueTask<IFeedback<OpaqueSession>> AuthenticateTotpAsync(TotpAuthenticationRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<OpaqueSession>> CreateApplicationSessionAsync(ApplicationSessionRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<SessionValidation>> ValidateSessionAsync(string token, CancellationToken cancellationToken = default);
+    ValueTask<IFeedback<ResolvedIdentitySession>> ResolveSessionAsync(string token, CancellationToken cancellationToken = default);
     ValueTask<IFeedback> RevokeSessionAsync(string token, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<UserLoginAttemptPage>> ListLoginAttemptsAsync(UserLoginAttemptSearchRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback> ReleaseAccountLockAsync(Guid userId, CancellationToken cancellationToken = default);
@@ -31,5 +32,6 @@ public interface IIdentity
     ValueTask<IFeedback<PasswordResetCompletionReceipt>> CompletePasswordResetAsync(CompletePasswordResetRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<EmailVerificationInfo>> GetEmailVerificationAsync(string email, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<IdentityVerificationInitiation>> BeginVerificationAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default);
+    ValueTask<IFeedback<bool>> InspectVerificationAsync(InspectIdentityVerificationRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteVerificationAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default);
 }

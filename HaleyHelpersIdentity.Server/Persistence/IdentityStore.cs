@@ -748,58 +748,13 @@ public sealed partial class IdentityStore : DALUtilBase, IIdentityMfaStore, IIde
     }
 
 
-    public async ValueTask<bool> OverrideEmailVerificationAsync(
+    public ValueTask<bool> OverrideEmailVerificationAsync(
         Guid userId,
         Guid contactId,
         string reasonCode,
         DateTimeOffset verifiedAt,
-        CancellationToken cancellationToken)
-    {
-        using var transaction = CreateNewTransaction();
-        var load = Load(cancellationToken, transaction);
-        using (transaction.Begin())
-        {
-            try
-            {
-                var row = await RowAsync(IdentityUserQueries.FIND_EMAIL_CONTACT_FOR_OVERRIDE, load,
-                    (UID, IdentityDatabase.ToBinary(userId)),
-                    (CONTACT_UID, IdentityDatabase.ToBinary(contactId))).ConfigureAwait(false);
-                if (row is null)
-                {
-                    transaction.Rollback();
-                    return false;
-                }
-
-                if (HasValue(row, "verified_at"))
-                {
-                    transaction.Commit();
-                    return true;
-                }
-
-                var localContactId = Required<long>(row, "local_contact_id");
-                var localUserId = Required<long>(row, "local_user_id");
-                var changed = await ExecAsync(IdentityUserQueries.OVERRIDE_EMAIL_VERIFICATION, load,
-                    (AT, verifiedAt.UtcDateTime), (ID, localContactId)).ConfigureAwait(false);
-                if (changed != 1)
-                {
-                    transaction.Rollback();
-                    return false;
-                }
-
-                await ExecAsync(IdentityUserQueries.CLEAR_CONTACT_VERIFICATION_PENDING, load,
-                    (AT, verifiedAt.UtcDateTime), (USER_ID, localUserId)).ConfigureAwait(false);
-                await AddOutboxAsync(load, _settings.EventPrefix + ".email.verification.overridden.v1", "user_account", userId,
-                    JsonSerializer.Serialize(new { userId, contactId, reasonCode }), verifiedAt).ConfigureAwait(false);
-                transaction.Commit();
-                return true;
-            }
-            catch
-            {
-                transaction.Rollback();
-                throw;
-            }
-        }
-    }
+        CancellationToken cancellationToken) =>
+        SetEmailVerificationAsync(new(userId, contactId, true, reasonCode, verifiedAt), cancellationToken);
 
 
     public async ValueTask<UserLoginAttemptPage> ListUserLoginAttemptsAsync(

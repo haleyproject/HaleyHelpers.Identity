@@ -51,6 +51,8 @@ public static class IdentityManagementEndpoints
             (await identity.VerifyMfaAsync(new(userId, methodId, MfaKind.Totp, request.Code), ct)).ToMinimalApiResult());
         group.MapDelete("/users/{userId:guid}/mfa/{methodId:guid}", async (Guid userId, Guid methodId, IIdentity identity, CancellationToken ct) =>
             (await identity.RetireMfaMethodAsync(userId, methodId, ct)).ToMinimalApiResult());
+        group.MapDelete("/users/{userId:guid}/mfa/unused", async (Guid userId, IMfaService mfa, CancellationToken ct) =>
+            (await mfa.PruneUnusedMethodsAsync(userId, ct)).ToMinimalApiResult());
         group.MapGet("/identity/providers", (IIdentityProviderAdministrationService providers, CancellationToken ct) => providers.ListProvidersAsync(ct));
         group.MapPost("/identity/providers", async (UpsertIdentityProviderRequest request, IIdentityProviderAdministrationService providers, CancellationToken ct) =>
             (await providers.UpsertProviderAsync(null, request, ct)).ToMinimalApiResult());

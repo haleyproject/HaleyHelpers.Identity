@@ -1,6 +1,10 @@
 namespace Haley.Models;
 public sealed class IdentityVerificationOptions
 {
+    /// <summary>Optional public recipient-page URL. Empty uses the current host's shared verification page.</summary>
+    public string PageUrl { get; set; } = string.Empty;
+    /// <summary>Public application-hosted page overrides, keyed by application/client GUID.</summary>
+    public Dictionary<string, string> ApplicationPageUrls { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Maximum lifetime for manually entered codes. Long-lived invitations should use opaque tokens.</summary>
     public int MaximumCodeValiditySeconds { get; set; } = 3_600;
     /// <summary>Maximum opaque-token lifetime. Applications may request e.g. 259200 seconds (three days).</summary>

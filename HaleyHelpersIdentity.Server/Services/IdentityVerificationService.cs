@@ -10,6 +10,29 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
     IPasswordHasher hasher, ISecretTokenGenerator tokens, IIdentityUuidGenerator uuids, IIdentityClock clock,
     IOptions<IdentityServerOptions> options)
 {
+    /// <summary>The caller must protect issuance with its management or application authorization boundary.</summary>
+    public ValueTask<IFeedback<IdentityVerificationInitiation>> BeginForApplicationAsync(Guid applicationId, string ownerContext,
+        BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        ForApplication(applicationId, ownerContext).BeginAsync(request, cancellationToken);
+
+    /// <summary>Management-only issuance with account eligibility diagnostics. The host must require operator authorization.</summary>
+    public ValueTask<IFeedback<IdentityVerificationInitiation>> BeginForAdministrationAsync(Guid applicationId, string ownerContext,
+        BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        ForApplication(applicationId, ownerContext).BeginAsync(request, true, cancellationToken);
+
+    /// <summary>Recipient completion still requires the original purpose/context-bound, one-use proof.</summary>
+    public ValueTask<IFeedback<bool>> InspectForApplicationAsync(Guid applicationId, string ownerContext,
+        InspectIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        ForApplication(applicationId, ownerContext).InspectAsync(request, cancellationToken);
+
+    public ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteForApplicationAsync(Guid applicationId, string ownerContext,
+        CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        ForApplication(applicationId, ownerContext).CompleteAsync(request, cancellationToken);
+
+    private IdentityVerificationService ForApplication(Guid applicationId, string ownerContext) =>
+        new(store, proofs, new VerificationApplicationContext(applicationId, ownerContext), authorization, mfa,
+            hasher, tokens, uuids, clock, options);
+
     public async ValueTask<IFeedback<EmailVerificationInfo>> GetEmailVerificationAsync(string email, CancellationToken cancellationToken = default)
     {
         if (!IdentityPolicy.TryNormalizeEmail(email, out var normalized)) return Fail<EmailVerificationInfo>("invalid_email", "A valid email address is required.");
@@ -19,7 +42,11 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
             Ok(new EmailVerificationInfo(subject.Identity.UserId, subject.Email, subject.VerifiedAt, subject.RecoveryEnabled));
     }
 
-    public async ValueTask<IFeedback<IdentityVerificationInitiation>> BeginAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<IFeedback<IdentityVerificationInitiation>> BeginAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        BeginAsync(request, false, cancellationToken);
+
+    private async ValueTask<IFeedback<IdentityVerificationInitiation>> BeginAsync(BeginIdentityVerificationRequest request, bool administration,
+        CancellationToken cancellationToken)
     {
         if (!Enum.IsDefined(request.Purpose) || !Enum.IsDefined(request.ProofKind) || request.Context?.Length > 1000 ||
             !IdentityPolicy.TryNormalizeEmail(request.Email, out var email))
@@ -35,15 +62,56 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
         if (context is null) return Denied<IdentityVerificationInitiation>();
         var subject = await store.FindVerificationSubjectAsync(email, cancellationToken).ConfigureAwait(false);
         subject = await ReleaseExpiredLoginLockAsync(subject, request.Purpose, cancellationToken).ConfigureAwait(false);
-        if (subject is null || !IsEligible(subject, request.Purpose)) return Ok(new IdentityVerificationInitiation(true));
+        if (request.Purpose == VerificationPurpose.PasswordlessLogin && subject?.Identity.Status == IdentityStatus.Locked)
+            return Fail<IdentityVerificationInitiation>(IdentityErrorCodes.AccountLocked,
+                "This account is locked after repeated unsuccessful sign-in attempts. Contact your administrator to unlock it.", 423);
+        if (subject is null) return administration
+            ? Fail<IdentityVerificationInitiation>("account_not_found", "No account has this recorded email contact.", 404)
+            : Ok(new IdentityVerificationInitiation(true));
+        if (IneligibilityReason(subject, request.Purpose) is { } reason) return administration
+            ? Fail<IdentityVerificationInitiation>("verification_not_available", reason, 409)
+            : Ok(new IdentityVerificationInitiation(true));
         var prepared = proofs.Create(new(application.ApplicationId, subject.Identity.UserId, PurposeCode(request.Purpose), subject.Email,
             ContextHash(subject, request.Purpose, request.ProofKind, context, request.Context), validity,
             request.ProofKind == VerificationProofKind.OpaqueToken ? validity : null));
         if (!await store.CreateVerificationChallengeAsync(prepared.Challenge, cancellationToken).ConfigureAwait(false))
-            return Ok(new IdentityVerificationInitiation(true));
+            return administration ? Fail<IdentityVerificationInitiation>("verification_issuance_rejected",
+                "No challenge was stored. Wait for the resend or exhausted-attempt cooldown. If it persists, check that verification policies are installed.", 409)
+                : Ok(new IdentityVerificationInitiation(true));
         return Ok(new IdentityVerificationInitiation(true, new(prepared.Challenge.ChallengeId, request.Purpose, request.ProofKind,
             subject.Email, request.ProofKind == VerificationProofKind.OpaqueToken ? prepared.Token! : prepared.Code,
             prepared.Challenge.ExpiresAt, prepared.ResendAllowedAt)));
+    }
+
+    public async ValueTask<IFeedback<bool>> InspectAsync(
+        InspectIdentityVerificationRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.ChallengeId == Guid.Empty || !Enum.IsDefined(request.Purpose)
+            || request.ProofKind != VerificationProofKind.OpaqueToken || string.IsNullOrWhiteSpace(request.Verifier))
+            return Fail<bool>("invalid_request", "The verification inspection payload is invalid.");
+
+        var context = await AuthorizedContextAsync(cancellationToken).ConfigureAwait(false);
+        if (context is null) return Denied<bool>();
+
+        var challenge = await store.FindVerificationChallengeAsync(request.ChallengeId, cancellationToken).ConfigureAwait(false);
+        var now = clock.UtcNow;
+        if (challenge?.SubjectId is null || challenge.DestinationHash is null ||
+            challenge.ApplicationId != application.ApplicationId || challenge.Purpose != PurposeCode(request.Purpose) ||
+            !VerificationProofService.IsPending(challenge, now))
+            return Invalid<bool>();
+
+        var subject = await store.FindVerificationSubjectAsync(
+            challenge!.SubjectId!.Value, challenge.DestinationHash, cancellationToken).ConfigureAwait(false);
+        if (subject is null || !IsEligible(subject, request.Purpose))
+            return Invalid<bool>();
+
+        if (!VerificationProofService.Matches(challenge, application.ApplicationId, PurposeCode(request.Purpose),
+                ContextHash(subject, request.Purpose, request.ProofKind, context, request.Context), now)
+            || !proofs.Verify(challenge, request.ProofKind == VerificationProofKind.NumericCode ? request.Verifier : null,
+            request.ProofKind == VerificationProofKind.OpaqueToken ? request.Verifier : null, now))
+            return Invalid<bool>();
+
+        return new Feedback<bool>(true, "The verification link is valid.", true);
     }
 
     public async ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default)
@@ -64,12 +132,15 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
         var now = clock.UtcNow;
         if (challenge?.SubjectId is null || challenge.DestinationHash is null ||
             challenge.ApplicationId != application.ApplicationId || challenge.Purpose != PurposeCode(request.Purpose) ||
-            !VerificationProofService.IsPending(challenge, now)) return Invalid();
+            !VerificationProofService.IsPending(challenge, now)) return Invalid<IdentityVerificationCompletion>();
         var subject = await store.FindVerificationSubjectAsync(challenge.SubjectId.Value, challenge.DestinationHash, cancellationToken).ConfigureAwait(false);
         subject = await ReleaseExpiredLoginLockAsync(subject, request.Purpose, cancellationToken).ConfigureAwait(false);
+        if (request.Purpose == VerificationPurpose.PasswordlessLogin && subject?.Identity.Status == IdentityStatus.Locked)
+            return Fail<IdentityVerificationCompletion>(IdentityErrorCodes.AccountLocked,
+                "This account is locked after repeated unsuccessful sign-in attempts. Contact your administrator to unlock it.", 423);
         if (subject is null || !IsEligible(subject, request.Purpose) ||
             !VerificationProofService.Matches(challenge, application.ApplicationId, PurposeCode(request.Purpose),
-                ContextHash(subject, request.Purpose, request.ProofKind, context, request.Context), now)) return Invalid();
+                ContextHash(subject, request.Purpose, request.ProofKind, context, request.Context), now)) return Invalid<IdentityVerificationCompletion>();
         if (!proofs.Verify(challenge, request.ProofKind == VerificationProofKind.NumericCode ? request.Verifier : null,
             request.ProofKind == VerificationProofKind.OpaqueToken ? request.Verifier : null, now))
         {
@@ -77,7 +148,7 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
             if (request.Purpose == VerificationPurpose.PasswordlessLogin)
                 await RecordAttemptAsync(subject, challenge, "invalid_credential", "passwordless_proof_rejected", cancellationToken).ConfigureAwait(false);
             return challenge.Attempts + 1 >= challenge.MaximumAttempts
-                ? Fail<IdentityVerificationCompletion>("verification_exhausted", "The verifier attempt limit was reached.") : Invalid();
+                ? Fail<IdentityVerificationCompletion>("verification_exhausted", "The verifier attempt limit was reached.") : Invalid<IdentityVerificationCompletion>();
         }
 
         StartOpaqueSessionCommand? sessionCommand = null;
@@ -85,7 +156,7 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
         if (request.Purpose == VerificationPurpose.PasswordlessLogin)
         {
             var factors = await mfa.VerifyAsync(new(subject.Identity.UserId, subject.Email, application.ApplicationId, context,
-                request.MfaKind, request.MfaMethodId, request.MfaCode), cancellationToken).ConfigureAwait(false);
+                request.MfaKind, request.MfaMethodId, request.MfaCode, request.RequireMfa), cancellationToken).ConfigureAwait(false);
             if (!factors.Status)
             {
                 if (factors.Key == "mfa_invalid")
@@ -137,7 +208,7 @@ public sealed class IdentityVerificationService(IIdentityVerificationStore store
         _ = await store.RecordLoginAttemptAndApplyProtectionAsync(new(subject.Identity.UserId, VerificationProofService.Hash(challenge.ChallengeId.ToString("N")),
             application.ApplicationId, outcome, reason, null, null, clock.UtcNow), options.Value.MaximumFailedAttempts,
             options.Value.LockoutSeconds, cancellationToken).ConfigureAwait(false);
-    private static IFeedback<IdentityVerificationCompletion> Invalid() => Fail<IdentityVerificationCompletion>("verification_invalid", "The verifier is invalid, expired, consumed, or does not match this request.");
+    private static IFeedback<T> Invalid<T>() => Fail<T>("verification_invalid", "The verifier is invalid, expired, consumed, or does not match this request.");
     private static IFeedback<T> Denied<T>() => Fail<T>("invalid_client_resource", "The application is not authorized for this identity context.", 403);
     private static IFeedback<T> Ok<T>(T result) => new Feedback<T>(true, "Identity verification operation completed.", result) { Source = "Haley.Identity" };
     private static IFeedback<T> Fail<T>(string key, string message, int code = 400) => new Feedback<T>(false, message) { Key = key, Code = code, Source = "Haley.Identity" };

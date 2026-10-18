@@ -8,6 +8,8 @@ public interface IMfaService
     ValueTask<IFeedback<TotpEnrollmentDetails>> InspectTotpEnrollmentAsync(string ticket, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<TotpEnrollmentCompletion>> ConfirmTotpEnrollmentAsync(ConfirmTotpTicketRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback> RetireMethodAsync(Guid userId, Guid methodId, CancellationToken cancellationToken = default);
+    /// <summary>Permanently removes retired methods that have never been confirmed or used, returning the number removed.</summary>
+    ValueTask<IFeedback<int>> PruneUnusedMethodsAsync(Guid userId, CancellationToken cancellationToken = default);
     ValueTask<IFeedback<RecoveryCodesReceipt>> ReplaceRecoveryCodesAsync(ReplaceRecoveryCodesRequest request, CancellationToken cancellationToken = default);
     ValueTask<IFeedback> VerifyAsync(VerifyMfaRequest request, CancellationToken cancellationToken = default);
 }

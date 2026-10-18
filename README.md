@@ -9,7 +9,7 @@ Reusable account storage and identity operations for .NET 8 applications. The sa
 | HaleyHelpersIdentity | `Haley.Helpers.Identity`: public requests/results, numeric status enums, DI registration, and the single Haley.Rest client implementation |
 | HaleyHelpersIdentity.Server | Shared account, password, login protection, TOTP, recovery-code, verification/recovery, session and MariaDB engine; shared HTTP endpoints |
 | HaleyIdentityHost | Private ASP.NET Core host with Identity, Applications and Federation administration and password-based management sessions |
-| HaleyIdentityAdmin.Web | Shared Kida-derived Svelte components; Haley branding and compact Identity, Applications and Federation navigation |
+| HaleyIdentityAdmin.Web | Shared Svelte identity components used by Haley and Kida; Haley branding, application registration and federation administration |
 | HaleyIdentity.Cred | Offline password-hash, lockout reset and secret-protection key tooling, bundled with and callable through HaleyIdentityHost |
 | HaleyHelpersIdentity.Tests | Behavior, transport, transaction and isolated MariaDB integration tests |
 
@@ -21,11 +21,15 @@ Release builds generate signed `.nupkg` and `.snupkg` files for both libraries, 
 
 Set `HaleyIdentityHost` as the startup project in `HaleyHelpers.Identity_Ref.sln`. The host serves the UI at `http://127.0.0.1:7430/admin/` and its admin backend at `/admin/api`. That backend calls the shared identity engine directly. Applications use the separate trusted API at `/api/identity`, in the same process. Kida retains its separate Admin and Service hosts.
 
-The host project's `AdminConsole` folder links to the shared Svelte source. With Node/npm installed, building generates the UI in `wwwroot/admin`; publishing includes it. The host uses normal ASP.NET configuration: `appsettings.json`, environment-specific settings, development User Secrets and environment variables. Publishing excludes local settings; supply deployment `appsettings.json` alongside the published host. The container links this file to its Config volume. Complete the connection, management password hash, keys and private-network setup in [the quick deployment guide](initialization.md) before starting the host.
+The host project's `AdminConsole` folder links to the shared Svelte source. With Node/npm installed, building generates the UI in `wwwroot/admin`; publishing includes it. The host uses normal ASP.NET configuration: `appsettings.json`, environment-specific settings, development User Secrets and environment variables. Publishing includes `appsettings.json` and excludes `appsettings.local.json`. Set deployment values in the published settings before building the container image, or supply the file through the Config volume. The container links this file to its Config volume. Complete the connection, management password hash, keys and private-network setup in [the quick deployment guide](initialization.md) before starting the host.
 
 The host also includes the offline credential utility. Run `dotnet Haley.Identity.Host.dll hash-admin-password` from its output directory to generate the management password hash, or use `--help` for all credential commands. These commands reuse `Haley.Identity.Cred` and finish before the web server or database initialization starts.
 
 ## Registration
+
+Set `Haley:Identity:Server:IssuerLabel` in the host's `appsettings.json` to your hosting identity name, for example `"EPBIM"` or `"Learn Desk"`. This global name appears in new authenticator QR entries, the console login/sidebar, and the console title when `identity-admin.config.json:title` is empty. Explicit console titles still override the title. An absent or blank issuer label uses `Haley Identity`. Restart the host after changing it.
+
+The name belongs to the shared identity deployment, not to a registered calling application. Renaming it does not change user IDs, application IDs, keys, TOTP secrets or token issuers. Existing authenticator entries retain their locally saved name; rename them in the authenticator app or use a new enrollment to import the updated name.
 
 Password-free authenticator login is available through `IIdentity.AuthenticateTotpAsync` for active accounts with verified email and enrolled TOTP. Enable `Server:TotpLogin:Enabled` and optionally restrict `ApplicationIds`. Kida reuses the engine and enforces its explicit MFA policies. Sessions record one factor only. See [authentication and recovery](AUTHENTICATION.md) for setup, routes and recovery codes.
 
@@ -87,4 +91,20 @@ See [corporate authentication](FEDERATION.md), [API reference](API.md), [initial
 
 ## Verification
 
+The Identity area includes shared Accounts, Verification & onboarding, Recovery codes, Authentication & sessions, and Account & profile tabs. These same screens are consumed by Kida; API adapters retain each host's administration boundary.
+
+Choose an active registered application for application-bound operations. Haley does not require OAuth clients, scopes or resource audiences for these workflows. Profile and recovery administration also support account UUID lookup, including accounts with non-email usernames.
+
+Verification supports numeric email codes and one-time links for email ownership, onboarding activation, password recovery and passwordless sign-in. Choose the publicly reachable recipient-page URL or use the configured per-application/default URL. Codes and links are prepared for manual delivery. The existing recipient page completes the purpose-bound proof without an administrator login. Email verification preserves lifecycle state; onboarding activates a Pending account.
+
+Recovery-code replacement invalidates the previous set and displays the new codes once. The authentication tools call the normal password, primary-authenticator and application-asserted sign-in operations, then permit opaque-session validation and revocation. Server account state, MFA, login protection and application authority continue to apply. Full profile editing includes display, given, family and preferred names, locale, time zone and avatar URL.
+
+Management writes require the operator session and antiforgery. Application-bound management routes reject revoked, unregistered or keyless applications. Normal application signatures and bindings are still enforced on the separate application API. No schema change or package publication is needed for the console additions.
+
+Rebuild and deploy Haley.Identity.Host with its frontend. The same shared-source change should also be included when rebuilding Kida Admin.
+
 Run `dotnet test HaleyHelpersIdentity.Tests/HaleyHelpersIdentity.Tests.csproj -p:HaleyIdentityUseSourceReferences=true` for available checks. Database tests require `HALEY_IDENTITY_TEST_CONNECTION` pointing to a disposable MariaDB server. They create and remove only uniquely named `hi_test_` databases. Do not point this setting at a persistent environment. The migration was additionally exercised against empty and populated copies of the pre-extraction schema in an isolated MariaDB process.
+
+## Prune unused MFA methods
+
+In Accounts, open a user's MFA posture and choose **Prune unused**. After confirmation, the console permanently removes all retired methods for that account that were never confirmed or used, together with their secret data and enrollment tickets. Methods referenced by another enrollment are retained. The screen refreshes and reports the actual number removed. Active and pending enrollments remain available. This control is shared by Haley Identity Admin and Kida Admin and requires the normal management session and CSRF token. No automatic pruning or schema migration runs at startup.

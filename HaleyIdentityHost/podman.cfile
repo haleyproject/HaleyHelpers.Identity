@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:8.0.18 as base
 WORKDIR /app/target
 COPY . .
 RUN mkdir -p Config Keys State SamlCerts && \
@@ -6,5 +6,10 @@ RUN mkdir -p Config Keys State SamlCerts && \
     ln -sfn /app/target/Config/appsettings.json appsettings.json
 RUN if [ -f wwwroot/admin/identity-admin.config.json ]; then mv wwwroot/admin/identity-admin.config.json Config/identity-admin.config.json; fi && \
     ln -sfn /app/target/Config/identity-admin.config.json wwwroot/admin/identity-admin.config.json
+# Persistent locations; haley-identity.container supplies the named volume mappings.
+VOLUME /app/target/Config
+VOLUME /app/target/Keys
+VOLUME /app/target/State
+VOLUME /app/target/SamlCerts
 EXPOSE 5000
 ENTRYPOINT ["dotnet", "Haley.Identity.Host.dll"]

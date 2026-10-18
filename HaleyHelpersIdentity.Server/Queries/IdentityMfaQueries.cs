@@ -2,6 +2,16 @@ using static Haley.Internal.IdentityFields;
 namespace Haley.Internal;
 internal static class IdentityMfaQueries
 {
+    // Delete only abandoned, retired factors. Confirmed/used factors and replacement
+    // references retain their history. Existing foreign keys cascade disposable data.
+    internal const string PRUNE_UNUSED_METHODS = $"""
+        DELETE m FROM `mfa_method` m
+          JOIN `user_account` u ON u.`id`=m.`user_id`
+         WHERE u.`uid`={USER_UID} AND m.`status`=4
+           AND m.`verified_at` IS NULL AND m.`last_used_at` IS NULL
+           AND NOT EXISTS (SELECT 1 FROM `mfa_enroll` e WHERE e.`replace_id`=m.`id`);
+        """;
+
     internal const string TOUCH_METHOD = $"""
         UPDATE `mfa_method` SET `last_used_at`={MODIFIED_AT}
          WHERE `uid`={METHOD_UID} AND `status`=2

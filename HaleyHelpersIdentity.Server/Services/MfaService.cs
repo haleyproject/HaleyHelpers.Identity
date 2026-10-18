@@ -65,34 +65,37 @@ public sealed class MfaService(
         string ticket,
         CancellationToken cancellationToken = default)
     {
-        if (!TryHashTicket(ticket, out var ticketHash)) return Fail<TotpEnrollmentDetails>();
+        if (!TryHashTicket(ticket, out var ticketHash))
+            return Fail<TotpEnrollmentDetails>(IdentityErrorCodes.MfaEnrollmentInvalid);
         var enrollment = await store.FindMfaEnrollmentAsync(ticketHash, cancellationToken).ConfigureAwait(false);
-        if (!CanUse(enrollment, clock.UtcNow) || enrollment!.Method.SecretEncrypted is null)
-            return Fail<TotpEnrollmentDetails>(IdentityErrorCodes.MfaInvalid);
+        var failure = EnrollmentFailure(enrollment, clock.UtcNow);
+        if (failure is not null) return Fail<TotpEnrollmentDetails>(failure);
+        var current = enrollment!;
         byte[] secret;
         try
         {
             secret = protector.Unprotect(
-                enrollment.Method.SecretEncrypted,
-                Purpose(enrollment.Method.Method.MethodId));
+                current.Method.SecretEncrypted,
+                Purpose(current.Method.Method.MethodId));
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or CryptographicException)
         {
             return Fail<TotpEnrollmentDetails>(IdentityErrorCodes.SecretProtectionUnavailable);
         }
         try
         {
             var encoded = Base32.Encode(secret);
-            var label = enrollment.Method.Method.Label ?? "Identity account";
-            var uri = $"otpauth://totp/{Uri.EscapeDataString(label)}?secret={encoded}&issuer={Uri.EscapeDataString(options.Value.IssuerLabel)}&digits=6&period=30";
+            var label = current.Method.Method.Label ?? "Identity account";
+            var issuer = options.Value.IssuerLabel;
+            var uri = $"otpauth://totp/{Uri.EscapeDataString(issuer + ":" + label)}?secret={encoded}&issuer={Uri.EscapeDataString(issuer)}&digits=6&period=30";
             return Ok(new TotpEnrollmentDetails(
-                enrollment.Method.Method.MethodId,
-                enrollment.Method.Method.UserId,
+                current.Method.Method.MethodId,
+                current.Method.Method.UserId,
                 label,
                 uri,
-                enrollment.ExpiresAt,
-                Math.Max(0, enrollment.MaximumAttempts - enrollment.Attempts),
-                enrollment.ReturnUri));
+                current.ExpiresAt,
+                Math.Max(0, current.MaximumAttempts - current.Attempts),
+                current.ReturnUri));
         }
         finally
         {
@@ -104,27 +107,43 @@ public sealed class MfaService(
         ConfirmTotpTicketRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (!TryHashTicket(request.Ticket, out var ticketHash) || string.IsNullOrWhiteSpace(request.Code))
-            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaInvalid);
+        if (!TryHashTicket(request.Ticket, out var ticketHash))
+            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaEnrollmentInvalid);
+        if (string.IsNullOrWhiteSpace(request.Code))
+            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaCodeInvalid);
         var now = clock.UtcNow;
         var enrollment = await store.FindMfaEnrollmentAsync(ticketHash, cancellationToken).ConfigureAwait(false);
-        if (!CanUse(enrollment, now) || enrollment!.Method.SecretEncrypted is null)
-            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaInvalid);
-        if (MatchTotpCounter(
-                enrollment.Method.SecretEncrypted,
+        var failure = EnrollmentFailure(enrollment, now);
+        if (failure is not null) return Fail<TotpEnrollmentCompletion>(failure);
+
+        long? counter;
+        try
+        {
+            counter = MatchTotpCounter(
+                enrollment!.Method.SecretEncrypted!,
                 enrollment.Method.Method.MethodId,
                 request.Code.Trim(),
-                now) is null)
+                now);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or CryptographicException)
+        {
+            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.SecretProtectionUnavailable);
+        }
+        if (counter is null)
         {
             await store.FailMfaEnrollmentAsync(ticketHash, now, cancellationToken).ConfigureAwait(false);
-            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaInvalid);
+            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaCodeInvalid);
         }
         if (!await store.CompleteMfaEnrollmentAsync(ticketHash, now, cancellationToken).ConfigureAwait(false))
-            return Fail<TotpEnrollmentCompletion>(IdentityErrorCodes.MfaInvalid);
+        {
+            var current = await store.FindMfaEnrollmentAsync(ticketHash, cancellationToken).ConfigureAwait(false);
+            return Fail<TotpEnrollmentCompletion>(
+                EnrollmentFailure(current, clock.UtcNow) ?? IdentityErrorCodes.MfaEnrollmentInvalid);
+        }
 
         var recoveryCodes = CreateRecoveryCodes(Math.Clamp(options.Value.Mfa.RecoveryCodeCount, 5, 20));
         if (!await store.ReplaceRecoveryCodesAsync(
-                enrollment.Method.Method.UserId,
+                enrollment!.Method.Method.UserId,
                 recoveryCodes.Select(HashRecovery).ToArray(),
                 now,
                 cancellationToken).ConfigureAwait(false))
@@ -146,6 +165,12 @@ public sealed class MfaService(
             : Fail(IdentityErrorCodes.MfaInvalid);
     }
 
+    public async ValueTask<IFeedback<int>> PruneUnusedMethodsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        if (userId == Guid.Empty) return Fail<int>();
+        return Ok(await store.PruneUnusedMfaMethodsAsync(userId, cancellationToken).ConfigureAwait(false));
+    }
+
     public async ValueTask<IFeedback<RecoveryCodesReceipt>> ReplaceRecoveryCodesAsync(ReplaceRecoveryCodesRequest request, CancellationToken cancellationToken = default)
     {
         if (request.UserId == Guid.Empty || request.Count is < 5 or > 20)
@@ -158,22 +183,34 @@ public sealed class MfaService(
     public async ValueTask<IFeedback> VerifyAsync(VerifyMfaRequest request, CancellationToken cancellationToken = default)
     {
         if (request.UserId == Guid.Empty || string.IsNullOrWhiteSpace(request.Code))
-            return Fail(IdentityErrorCodes.MfaInvalid);
+            return Fail(IdentityErrorCodes.InvalidRequest, "An account and verification code are required.");
         if (request.Kind == MfaKind.RecoveryCode)
-            return await store.ConsumeRecoveryCodeAsync(request.UserId, HashRecovery(request.Code.Trim()), clock.UtcNow, cancellationToken).ConfigureAwait(false) ? Ok() : Fail(IdentityErrorCodes.MfaInvalid);
-        if (request.Kind != MfaKind.Totp || request.MethodId is null)
-            return Fail(IdentityErrorCodes.MfaInvalid);
+            return await store.ConsumeRecoveryCodeAsync(request.UserId, HashRecovery(request.Code.Trim()), clock.UtcNow, cancellationToken).ConfigureAwait(false)
+                ? Ok() : Fail(IdentityErrorCodes.MfaInvalid, "The recovery code is invalid or has already been used.", 401);
+        if (request.Kind != MfaKind.Totp)
+            return Fail(IdentityErrorCodes.InvalidRequest, "Choose an authenticator code or recovery code for this operation.");
+        if (request.MethodId is null)
+            return Fail(IdentityErrorCodes.InvalidRequest, "Select the enrolled authenticator to verify this code.");
         var method = await store.FindMfaMethodAsync(request.MethodId.Value, cancellationToken).ConfigureAwait(false);
-        if (method is null || method.Method.UserId != request.UserId || method.Method.Status != IdentityRecordStatus.Active || method.SecretEncrypted is null)
-            return Fail(IdentityErrorCodes.MfaInvalid);
+        if (method is null || method.Method.UserId != request.UserId || method.Method.Status != IdentityRecordStatus.Active || method.Method.Kind != MfaKind.Totp)
+            return Fail(IdentityErrorCodes.MfaInvalid, "The authenticator method is unavailable for this account or is not active.", 401);
+        if (method.SecretEncrypted is null)
+            return Fail(IdentityErrorCodes.SecretProtectionUnavailable);
         long? counter;
         try { counter = MatchTotpCounter(method.SecretEncrypted, request.MethodId.Value, request.Code, clock.UtcNow); }
         catch (Exception error) when (error is InvalidOperationException or CryptographicException)
         { return Fail(IdentityErrorCodes.SecretProtectionUnavailable); }
         if (counter is null)
-            return Fail(IdentityErrorCodes.MfaInvalid);
+            return Fail(IdentityErrorCodes.MfaInvalid, "The authenticator code is invalid or outside the accepted time window.", 401);
         var counterStartedAt = DateTimeOffset.FromUnixTimeSeconds(counter.Value * 30);
-        return await store.TouchMfaMethodAsync(request.MethodId.Value, counterStartedAt, cancellationToken).ConfigureAwait(false) ? Ok() : Fail(IdentityErrorCodes.MfaInvalid);
+        if (await store.TouchMfaMethodAsync(request.MethodId.Value, counterStartedAt, cancellationToken).ConfigureAwait(false))
+            return Ok();
+        var current = await store.FindMfaMethodAsync(request.MethodId.Value, cancellationToken).ConfigureAwait(false);
+        if (current?.Method.UserId == request.UserId && current.Method.Status == IdentityRecordStatus.Active
+            && current.Method.LastUsedAt >= counterStartedAt)
+            return Fail(IdentityErrorCodes.MfaCodeReused,
+                "This authenticator code has already been used. Wait for the next code, then try again.", 401);
+        return Fail(IdentityErrorCodes.MfaInvalid, "The authenticator method is no longer available for this account.", 401);
     }
 
     private long? MatchTotpCounter(byte[] encrypted, Guid methodId, string code, DateTimeOffset now)
@@ -211,9 +248,22 @@ public sealed class MfaService(
         Enumerable.Range(0, count)
             .Select(_ => Convert.ToHexString(RandomNumberGenerator.GetBytes(8)))
             .ToArray();
-    private static bool CanUse(StoredMfaEnrollment? enrollment, DateTimeOffset now) =>
-        enrollment is not null && enrollment.ConsumedAt is null && enrollment.ExpiresAt > now &&
-        enrollment.Attempts < enrollment.MaximumAttempts && enrollment.Method.Method.Status == IdentityRecordStatus.Pending;
+    private static string? EnrollmentFailure(StoredMfaEnrollment? enrollment, DateTimeOffset now)
+    {
+        if (enrollment is null) return IdentityErrorCodes.MfaEnrollmentInvalid;
+        if (enrollment.Method.Method.Status is not (IdentityRecordStatus.Pending or IdentityRecordStatus.Active))
+            return IdentityErrorCodes.MfaEnrollmentInvalid;
+        if (enrollment.Attempts >= enrollment.MaximumAttempts) return IdentityErrorCodes.MfaEnrollmentLocked;
+        if (enrollment.ConsumedAt is not null)
+            return enrollment.Method.Method.Status == IdentityRecordStatus.Active
+                ? IdentityErrorCodes.MfaEnrollmentConsumed
+                : enrollment.Attempts > 0 ? IdentityErrorCodes.MfaEnrollmentLocked : IdentityErrorCodes.MfaEnrollmentInvalid;
+        if (enrollment.ExpiresAt <= now) return IdentityErrorCodes.MfaEnrollmentExpired;
+        if (enrollment.Method.Method.Status != IdentityRecordStatus.Pending)
+            return IdentityErrorCodes.MfaEnrollmentInvalid;
+        if (enrollment.Method.SecretEncrypted is null) return IdentityErrorCodes.SecretProtectionUnavailable;
+        return null;
+    }
     private static bool TryHashTicket(string? value, out byte[] hash)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 512)
@@ -233,14 +283,30 @@ public sealed class MfaService(
     {
         Source = "Haley.Identity.Mfa"
     };
-    private static IFeedback Fail(string code = IdentityErrorCodes.InvalidRequest) => new Feedback(false, "MFA operation failed.")
+    private static IFeedback Fail(string code = IdentityErrorCodes.InvalidRequest, string? message = null, int? status = null) => new Feedback(false, message ?? FailureMessage(code))
     {
         Source = "Haley.Identity.Mfa",
-        Key = code
+        Key = code,
+        Code = status ?? FailureStatus(code)
     };
-    private static IFeedback<T> Fail<T>(string code = IdentityErrorCodes.InvalidRequest) => new Feedback<T>(false, "MFA operation failed.", default!)
+    private static IFeedback<T> Fail<T>(string code = IdentityErrorCodes.InvalidRequest) => new Feedback<T>(false, FailureMessage(code), default!)
     {
         Source = "Haley.Identity.Mfa",
-        Key = code
+        Key = code,
+        Code = FailureStatus(code)
+    };
+    private static int FailureStatus(string code) => code is IdentityErrorCodes.SecretProtectionUnavailable or IdentityErrorCodes.IdentityUnavailable ? 503 : 400;
+    private static string FailureMessage(string code) => code switch
+    {
+        IdentityErrorCodes.SecretProtectionUnavailable => "The server cannot access the authenticator secret. Check the server's SecretProtection key configuration.",
+        IdentityErrorCodes.IdentityUnavailable => "The identity service could not complete the MFA storage operation.",
+        IdentityErrorCodes.MfaInvalid => "The MFA method or verification proof is invalid or no longer available.",
+        IdentityErrorCodes.MfaEnrollmentInvalid => "This authenticator enrollment is invalid or was replaced. Start a new setup and scan its QR code.",
+        IdentityErrorCodes.MfaEnrollmentExpired => "This authenticator enrollment has expired. Start a new setup and scan its QR code.",
+        IdentityErrorCodes.MfaEnrollmentConsumed => "This authenticator enrollment has already been used. Reload your authenticator settings.",
+        IdentityErrorCodes.MfaEnrollmentLocked => "This authenticator enrollment has reached its failed-attempt limit. Start a new setup and scan its QR code.",
+        IdentityErrorCodes.MfaCodeInvalid => "The code did not match this authenticator. Use the current code from the latest QR setup and check that your device time is automatic.",
+        IdentityErrorCodes.InvalidRequest => "The MFA request is invalid. Check its account, method and required fields.",
+        _ => "The MFA operation could not be completed."
     };
 }

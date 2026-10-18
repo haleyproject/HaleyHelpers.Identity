@@ -11,14 +11,30 @@ internal static class IdentityVerificationPolicy
         _ => throw new ArgumentOutOfRangeException(nameof(purpose))
     };
 
-    internal static bool IsEligible(StoredVerificationSubject subject, VerificationPurpose purpose) => purpose switch
+    internal static bool IsEligible(StoredVerificationSubject subject, VerificationPurpose purpose) =>
+        IneligibilityReason(subject, purpose) is null;
+
+    internal static string? IneligibilityReason(StoredVerificationSubject subject, VerificationPurpose purpose)
     {
-        VerificationPurpose.EmailVerification => subject.Identity.Status is IdentityStatus.Pending or IdentityStatus.Active,
-        VerificationPurpose.Onboarding => subject.Identity.Status == IdentityStatus.Pending,
-        VerificationPurpose.PasswordReset => subject.Identity.Status == IdentityStatus.Active &&
-            subject.VerifiedAt is not null && subject.RecoveryEnabled && subject.CredentialId is not null,
-        VerificationPurpose.PasswordlessLogin => subject.Identity.Status == IdentityStatus.Active &&
-            subject.VerifiedAt is not null && subject.RecoveryEnabled && !subject.Identity.PasswordChangeRequired,
-        _ => false
-    };
+        var status = subject.Identity.Status;
+        if (purpose == VerificationPurpose.EmailVerification)
+            return status is IdentityStatus.Pending or IdentityStatus.Active ? null :
+                $"Email verification requires a Pending or Active account. This account is {status}.";
+        if (purpose == VerificationPurpose.Onboarding)
+            return status == IdentityStatus.Pending ? null :
+                $"Onboarding requires a Pending account. This account is {status}. To repeat mailbox verification, choose Verify email.";
+        if (purpose is not (VerificationPurpose.PasswordReset or VerificationPurpose.PasswordlessLogin))
+            return "Select a supported verification purpose.";
+        if (status != IdentityStatus.Active)
+            return $"This operation requires an Active account. This account is {status}. Verifying an email does not activate the account; complete onboarding or change its lifecycle state.";
+        if (subject.VerifiedAt is null)
+            return "Verify this email first, using an email challenge or the administrator's break-glass action.";
+        if (!subject.RecoveryEnabled)
+            return "This email is verified but recovery is disabled. Use Break-glass verify to confirm ownership and enable recovery.";
+        if (purpose == VerificationPurpose.PasswordReset && subject.CredentialId is null)
+            return "Password recovery requires an existing password. This account has no active password; set an initial password in the account's lifecycle controls.";
+        if (purpose == VerificationPurpose.PasswordlessLogin && subject.Identity.PasswordChangeRequired)
+            return "This account requires a password change. Set or recover its password before passwordless sign-in.";
+        return null;
+    }
 }

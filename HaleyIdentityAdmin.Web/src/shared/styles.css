@@ -133,7 +133,7 @@ nav button.active small { color: var(--mint-dark); opacity: .75; }
 .sidebar-lock { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .sidebar-lock > span { font-size: 15px; }
 .content { grid-column: 2; min-width: 0; max-width: 100%; min-height: 100vh; background: var(--bg); }
-.page { width: 100%; min-width: 0; padding: 32px clamp(20px, 4vw, 48px) 64px; max-width: 1440px; margin: 0 auto; }
+.page { width: 100%; min-width: 0; padding: 28px clamp(20px, 3vw, 56px) 64px; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; flex-wrap: wrap; }
 .page-header h1 { margin: 8px 0 0; font-size: clamp(24px, 3vw, 32px); font-weight: 650; letter-spacing: -.025em; line-height: 1.15; }
 .header-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; }

@@ -88,15 +88,23 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
         {
             var known = IdentityPolicy.TryNormalizeUsername(request.Username, out var normalized)
                 ? await store.FindLocalCredentialAsync(normalized, cancellationToken).ConfigureAwait(false) : null;
+            if (known?.Status == IdentityStatus.Locked)
+                return Fail<OpaqueSession>(IdentityErrorCodes.AccountLocked,
+                    "This account is locked after repeated unsuccessful sign-in attempts. Contact your administrator to unlock it.");
             await store.RecordLoginAttemptAndApplyProtectionAsync(new(known?.UserId, Hash(request.Username ?? string.Empty), application.ApplicationId,
                 "invalid_credential", "credential_rejected", null, null, now), options.Value.MaximumFailedAttempts, options.Value.LockoutSeconds, cancellationToken).ConfigureAwait(false);
+            var current = known is not null && IdentityPolicy.TryNormalizeUsername(request.Username, out var login)
+                ? await store.FindLocalCredentialAsync(login, cancellationToken).ConfigureAwait(false) : null;
+            if (current?.Status == IdentityStatus.Locked)
+                return Fail<OpaqueSession>(IdentityErrorCodes.AccountLocked,
+                    "This account is locked after repeated unsuccessful sign-in attempts. Contact your administrator to unlock it.");
             return Fail<OpaqueSession>("invalid_credentials", "The supplied credentials were rejected.");
         }
         if (credential.PasswordChangeRequired) return Fail<OpaqueSession>("password_change_required", "Change the initial password before starting a session.");
         var methods = await mfa.ListMethodsAsync(credential.UserId, cancellationToken).ConfigureAwait(false);
         var activeFactors = methods.Where(method => method.Status == IdentityRecordStatus.Active && method.Kind == MfaKind.Totp).ToArray();
         var authenticationMethods = new List<string> { "pwd" };
-        if (activeFactors.Length > 0)
+        if (request.RequireMfa && activeFactors.Length > 0)
         {
             if (request.MfaKind is null || string.IsNullOrWhiteSpace(request.MfaCode))
                 return Fail<OpaqueSession>("mfa_required", "This account requires its enrolled second factor.");
@@ -165,6 +173,16 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
         return session is null ? Fail<SessionValidation>("invalid_session", "The session is unavailable, expired, revoked, or belongs to another application.") : Ok(session);
     }
 
+    public async ValueTask<IFeedback<ResolvedIdentitySession>> ResolveSessionAsync(string token, CancellationToken cancellationToken = default)
+    {
+        if (!ValidToken(token)) return Fail<ResolvedIdentitySession>("invalid_session", "The session token or application context is invalid.");
+        var session = await store.ResolveOpaqueSessionAsync(application.ApplicationId, tokens.Hash(token), clock.UtcNow,
+            cancellationToken, application.OwnerContext).ConfigureAwait(false);
+        return session is null
+            ? Fail<ResolvedIdentitySession>("invalid_session", "The session is unavailable, expired, revoked, or belongs to another application.")
+            : Ok(session);
+    }
+
     public async ValueTask<IFeedback> RevokeSessionAsync(string token, CancellationToken cancellationToken = default)
     {
         if (!ValidToken(token)) return Fail("invalid_session", "The session token or application context is invalid.");
@@ -204,6 +222,9 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
         verification.GetEmailVerificationAsync(email, cancellationToken);
     public ValueTask<IFeedback<IdentityVerificationInitiation>> BeginVerificationAsync(BeginIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
         verification.BeginAsync(request, cancellationToken);
+    public ValueTask<IFeedback<bool>> InspectVerificationAsync(InspectIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
+        verification.InspectAsync(request, cancellationToken);
+
     public ValueTask<IFeedback<IdentityVerificationCompletion>> CompleteVerificationAsync(CompleteIdentityVerificationRequest request, CancellationToken cancellationToken = default) =>
         verification.CompleteAsync(request, cancellationToken);
 
@@ -220,6 +241,7 @@ public sealed class IdentityService(IdentityStore store, IMfaService mfa,
     private static IFeedback Ok() => new Feedback(true, "Identity operation completed.") { Source = "Haley.Identity" };
     private static IFeedback<T> Ok<T>(T value) => new Feedback<T>(true, "Identity operation completed.", value) { Source = "Haley.Identity" };
     private static int ErrorStatus(string key) => key == "account_not_found" ? 404 :
+        key is "account_locked" or "identity.account_locked" ? 423 :
         key is "invalid_credentials" or "invalid_session" or "mfa_invalid" ? 401 :
         key.EndsWith("conflict", StringComparison.Ordinal) || key == "session_rejected" ? 409 : 400;
     private static IFeedback Fail(string key, string message) => new Feedback(false, message) { Code = ErrorStatus(key), Key = key, Source = "Haley.Identity" };

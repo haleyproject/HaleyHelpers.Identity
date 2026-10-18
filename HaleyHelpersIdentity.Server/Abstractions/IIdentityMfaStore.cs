@@ -9,6 +9,7 @@ public interface IIdentityMfaStore
     ValueTask<bool> FailMfaEnrollmentAsync(byte[] ticketHash, DateTimeOffset now, CancellationToken cancellationToken);
     ValueTask<bool> CompleteMfaEnrollmentAsync(byte[] ticketHash, DateTimeOffset now, CancellationToken cancellationToken);
     ValueTask<bool> RetireMfaMethodAsync(Guid userId, Guid methodId, DateTimeOffset now, CancellationToken cancellationToken);
+    ValueTask<int> PruneUnusedMfaMethodsAsync(Guid userId, CancellationToken cancellationToken);
     ValueTask<bool> ConfirmMfaMethodAsync(Guid methodId, DateTimeOffset now, CancellationToken cancellationToken);
     ValueTask<bool> TouchMfaMethodAsync(Guid methodId, DateTimeOffset now, CancellationToken cancellationToken);
     ValueTask<bool> ReplaceRecoveryCodesAsync(Guid userId, IReadOnlyCollection<byte[]> codeHashes, DateTimeOffset now, CancellationToken cancellationToken);

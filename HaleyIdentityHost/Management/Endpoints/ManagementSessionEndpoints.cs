@@ -13,12 +13,14 @@ public static class ManagementSessionEndpoints
 {
     public static void MapIdentityManagementSessions(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/admin/api/session", (HttpContext context, IAntiforgery antiforgery, ManagementSessionService sessions) =>
+        endpoints.MapGet("/admin/api/session", (HttpContext context, IAntiforgery antiforgery, ManagementSessionService sessions,
+            IOptions<IdentityServerOptions> identity) =>
         {
             var tokens = antiforgery.GetAndStoreTokens(context);
             return new AdminSessionResponse(context.User.Identity?.IsAuthenticated == true &&
                 sessions.IsActive(context.User.FindFirstValue(IdentityManagementHosting.SessionClaim)), sessions.Configured,
-                tokens.RequestToken ?? throw new InvalidOperationException("Antiforgery token generation failed."));
+                tokens.RequestToken ?? throw new InvalidOperationException("Antiforgery token generation failed."))
+                { IdentityName = identity.Value.IssuerLabel };
         }).AllowAnonymous();
         endpoints.MapPost("/admin/api/login", async (AdminLoginRequest request, HttpContext context,
             ManagementSessionService sessions, IOptions<IdentityManagementOptions> options, CancellationToken ct) =>

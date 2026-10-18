@@ -3,6 +3,8 @@ using Haley.Abstractions;
 namespace Haley.Constants;
 public static class IdentityErrorCodes
 {
+    public const string AccountLocked = "identity.account_locked";
+    public const string EmailUnverified = "identity.email_unverified";
     public const string InvalidRequest = "identity.invalid_request";
     public const string DuplicateIdentity = "identity.duplicate";
     public const string LinkVerificationRequired = "identity.link_verification_required";
@@ -32,6 +34,12 @@ public static class IdentityErrorCodes
     public const string VerificationExhausted = "identity.verification_exhausted";
     public const string MfaRequired = "identity.mfa_required";
     public const string MfaInvalid = "identity.mfa_invalid";
+    public const string MfaEnrollmentInvalid = "identity.mfa_enrollment_invalid";
+    public const string MfaEnrollmentExpired = "identity.mfa_enrollment_expired";
+    public const string MfaEnrollmentConsumed = "identity.mfa_enrollment_consumed";
+    public const string MfaEnrollmentLocked = "identity.mfa_enrollment_locked";
+    public const string MfaCodeInvalid = "identity.mfa_code_invalid";
+    public const string MfaCodeReused = "identity.mfa_code_reused";
     public const string FederationRejected = "identity.federation_rejected";
     public const string FederationProviderNotFound = "identity.federation_provider_not_found";
     public const string FederationProviderSelectionRequired = "identity.federation_provider_selection_required";

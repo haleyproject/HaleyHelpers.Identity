@@ -61,6 +61,7 @@ public static class IdentityHosting
         builder.AddIdentityManagement();
         builder.Services.AddScoped<IdentityAdministrationService>();
         builder.Services.Replace(ServiceDescriptor.Scoped<IIdentityApplicationContext, IdentityHttpApplicationContext>());
+        builder.Services.Replace(ServiceDescriptor.Singleton<IIdentityRecoveryAuthorization, HostedIdentityAuthorization>());
     }
 
     public static void ConfigureErrors(WebApplication app)
@@ -100,7 +101,10 @@ public static class IdentityHosting
         ConfigureAdminConsole(app);
         app.MapIdentityManagementSessions();
         app.MapIdentityManagementEndpoints();
+        app.MapIdentityWorkflowManagement();
         app.MapIdentityApplicationManagement();
+        app.MapIdentityVerificationManagement();
+        app.MapIdentityVerificationBrowserEndpoints();
         app.MapIdentityFederationBrowserEndpoints();
         app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
         app.MapHaleyIdentityEndpoints();

@@ -15,6 +15,44 @@ namespace Haley.Identity.Tests;
 public sealed class IdentityRemoteTests
 {
     [Fact]
+    public async Task SessionResolutionUsesBoundBackchannelAndReturnsVerifiedSubjectWithoutToken()
+    {
+        var appId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        using var server = new TestServer(new WebHostBuilder().Configure(app => app.Run(async context =>
+        {
+            Assert.Equal("POST", context.Request.Method);
+            Assert.Equal("/api/identity/sessions/resolution", context.Request.Path);
+            Assert.False(context.Request.QueryString.HasValue);
+            Assert.Equal(appId.ToString("D"), context.Request.Headers["X-Haley-Application-Id"]);
+            Assert.Equal("active", context.Request.Headers["X-Haley-Session-Key-Id"]);
+            Assert.Equal("test-session-binding-secret-for-transport", context.Request.Headers["X-Haley-Session-Key"]);
+            using var body = await System.Text.Json.JsonDocument.ParseAsync(context.Request.Body);
+            Assert.Contains(body.RootElement.EnumerateObject(), p => p.Name.Equals("token", StringComparison.OrdinalIgnoreCase) && p.Value.GetString() == "opaque-resolution-proof");
+            await context.Response.WriteAsJsonAsync(new ResolvedIdentitySession(sessionId, DateTimeOffset.UtcNow.AddMinutes(5),
+                userId, "Corporate User", "user@example.test", true, IdentityStatus.Active, ["saml"]));
+        })));
+        var settings = Options.Create(new IdentityOptions { ApplicationId = appId, Url = "base=http://localhost/;", ApiPath = "api/identity",
+            SessionKeyId = "active", SessionBindingSecret = "test-session-binding-secret-for-transport" });
+        var key = $"{typeof(IdentityRemoteTransport).FullName}:{appId:D}:{settings.Value.Url}";
+        ClientStore.AddClient(key, new FluentClient("http://localhost/", server.CreateHandler()));
+        try
+        {
+            var client = new IdentityRemoteClient(new(settings, new IdentityRemoteAuthentication(), NullLogger<IdentityRemoteTransport>.Instance));
+            var result = await client.ResolveSessionAsync("opaque-resolution-proof");
+            Assert.True(result.Status, result.Message);
+            Assert.Equal(userId, result.Result.UserId);
+            Assert.Equal(sessionId, result.Result.SessionId);
+            Assert.True(result.Result.EmailVerified);
+            Assert.Equal("user@example.test", result.Result.Email);
+            Assert.Contains("saml", result.Result.AuthenticationMethods);
+            Assert.DoesNotContain("opaque-resolution-proof", System.Text.Json.JsonSerializer.Serialize(result.Result));
+        }
+        finally { ClientStore.RemoveClient(key); }
+    }
+
+    [Fact]
     public async Task TotpLoginSendsProofInBodyWithApplicationCredentialsAndPreservesTheSession()
     {
         var appId = Guid.NewGuid(); var sessionId = Guid.NewGuid();

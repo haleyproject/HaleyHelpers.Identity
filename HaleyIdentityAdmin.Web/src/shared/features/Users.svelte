@@ -1,16 +1,20 @@
 <script lang="ts">
   import { RecordStatus, OperationalStatus, statusLabel, statusClass, operationalStatusLabel } from '../lib/statuses';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import IdentityWorkflows from './IdentityWorkflows.svelte';
   import { adminApi, ApiError } from '../lib/api';
   import { requestConfirmation } from '../lib/confirmation';
   import { copyText } from '../lib/clipboard';
   import { showError } from '../lib/snackbar';
   import type {
     BulkPasswordResetResponse,
+    AccountEmailContact,
     BulkUserImportResponse,
     IdentityOperationalRecord,
     IdentityClientPolicy,
     IdentityStatus,
+    IdentityWorkflowApplication,
+    IdentityWorkflowSettings,
     MfaMethod,
     AdminTotpEnrollment,
     TotpEnrollmentCompletion,
@@ -25,11 +29,21 @@
     UserMfaPolicyOverride
   } from '../lib/types';
 
-  export let onAccess: (subjectId: string) => void = () => {};
+  // The host navigates to its Access page; the display name lets it label the way back.
+  export let onAccess: (subjectId: string, displayName?: string) => void = () => {};
 
   type SessionView = RecordStatus.Active | 'all';
-  type ControlSection = 'profile' | 'mfa' | 'attempts' | 'lifecycle';
-  type LifecycleSection = 'identity' | 'verification' | 'evidence';
+  // One account, one page: the directory is replaced by a full page with a left rail of sections.
+  type ControlSection = 'overview' | 'security' | 'sessions' | 'attempts' | 'verification' | 'authentication' | 'lifecycle';
+  const sections: Array<{ id: ControlSection; label: string; detail: string; group: 'Account' | 'Workflows' }> = [
+    { id: 'overview', label: 'Overview', detail: 'Details & profile', group: 'Account' },
+    { id: 'security', label: 'Security', detail: 'Authenticators & recovery codes', group: 'Account' },
+    { id: 'sessions', label: 'Sessions', detail: 'Active sessions & history', group: 'Account' },
+    { id: 'attempts', label: 'Sign-in attempts', detail: 'Lock state & evidence', group: 'Account' },
+    { id: 'lifecycle', label: 'Lifecycle', detail: 'Status, restore, delete', group: 'Account' },
+    { id: 'verification', label: 'Verification', detail: 'Email codes, links, onboarding', group: 'Workflows' },
+    { id: 'authentication', label: 'Authentication', detail: 'Sign in, validate, change password', group: 'Workflows' }
+  ];
 
   let users: UserIdentity[] = [];
   let query = '';
@@ -46,10 +60,10 @@
   let showImport = false;
   let showReset = false;
   let inspectedUser: UserIdentity | null = null;
-  let controlSection: ControlSection = 'profile';
-  let lifecycleSection: LifecycleSection = 'identity';
+  let controlSection: ControlSection = 'overview';
   let inspectedProfile: UserProfile | null = null;
-  let profileDisplayName = '';
+  let inspectedEmailContacts: AccountEmailContact[] = [];
+  let verificationReason = 'administrator_review';
   let inspectedMfa: MfaMethod[] = [];
   let identityPolicies: IdentityClientPolicy[] = [];
   let inspectedMfaOverrides: UserMfaPolicyOverride[] = [];
@@ -79,6 +93,13 @@
   let resetResult: BulkPasswordResetResponse | null = null;
   let resetForm = { newPassword: '', confirmation: '', requirePasswordChange: true, reasonCode: 'hr_bulk_reset' };
 
+  // Application context for the workflow sections. Loaded once; the choice survives section changes.
+  let workflowApplications: IdentityWorkflowApplication[] = [];
+  let workflowApplicationId = '';
+  let workflowResource = '';
+  let workflowSettings: IdentityWorkflowSettings | null = null;
+  let workflowLoaded = false;
+
   $: if (error) { showError(error, 'Identity operation failed'); error = ''; }
 
   const minimumPasswordLength = 9;
@@ -88,7 +109,7 @@
   const statuses: IdentityStatus[] = [RecordStatus.Pending, RecordStatus.Active, RecordStatus.Locked, RecordStatus.Suspended, RecordStatus.Retired];
 
   function userDialogOpen() {
-    return showCreate || showImport || showReset || inspectedUser !== null || sessionUser !== null;
+    return showCreate || showImport || showReset || inspectedUser !== null;
   }
 
   function openCreateDialog() { error = ''; showCreate = true; }
@@ -98,7 +119,51 @@
   function openResetDialog() { error = ''; resetResult = null; showReset = true; }
   function closeResetDialog() { error = ''; showReset = false; }
 
-  onMount(() => { void load(); });
+  // Account pages have their own URL so they can open in a new browser tab:
+  //   #/users                       directory
+  //   #/users/<userId>[/<section>]  one account, optionally on a section
+  const accountRoute = /^#\/users\/([0-9a-f-]{32,36})(?:\/([a-z-]+))?\/?$/i;
+  function accountHref(user: UserIdentity, section: ControlSection = 'overview') {
+    return `#/users/${user.userId}${section === 'overview' ? '' : `/${section}`}`;
+  }
+  function isSection(value: string | undefined): value is ControlSection {
+    return sections.some(item => item.id === value);
+  }
+  function syncHash(section: ControlSection) {
+    const next = inspectedUser ? accountHref(inspectedUser, section) : '#/users';
+    if (window.location.hash !== next) history.replaceState(null, '', next);
+  }
+  async function openFromHash() {
+    const match = accountRoute.exec(window.location.hash);
+    if (!match) {
+      if (inspectedUser) closeControl(true, false);
+      else if (users.length === 0 && !loading) void load();
+      return;
+    }
+    const [, userId, section] = match;
+    if (inspectedUser?.userId.toLowerCase() === userId.toLowerCase()) {
+      if (isSection(section) && section !== controlSection) selectSection(section, false);
+      return;
+    }
+    try {
+      const user = await adminApi.userAccount(userId);
+      await openControl(user, isSection(section) ? section : 'overview', false);
+    } catch (reason) {
+      error = message(reason);
+      await load();
+    }
+  }
+  function onHashChange() { void openFromHash(); }
+
+  onMount(() => {
+    window.addEventListener('hashchange', onHashChange);
+    if (accountRoute.test(window.location.hash)) void openFromHash();
+    else void load();
+  });
+  onDestroy(() => {
+    window.removeEventListener('hashchange', onHashChange);
+    if (window.location.hash.startsWith('#/users')) history.replaceState(null, '', window.location.pathname + window.location.search);
+  });
 
   async function load(requestedPage = page) {
     loading = true;
@@ -121,10 +186,6 @@
       hasNext = result.hasNext;
       const visible = new Set(users.map(user => user.userId));
       selectedUserIds = new Set([...selectedUserIds].filter(userId => visible.has(userId)));
-      if (sessionUser && !visible.has(sessionUser.userId)) {
-        sessionUser = null;
-        sessionResult = null;
-      }
     } catch (reason) {
       error = message(reason);
     } finally {
@@ -265,7 +326,7 @@
       notice = `Permanently deleted ${user.displayName}.`;
       selectedUserIds.delete(user.userId);
       selectedUserIds = new Set(selectedUserIds);
-      if (inspectedUser?.userId === user.userId) inspectedUser = null;
+      if (inspectedUser?.userId === user.userId) closeControl(false, true);
       await load(page);
     } catch (reason) {
       error = message(reason);
@@ -282,26 +343,51 @@
     await loadSessions(user.userId, RecordStatus.Active, 1);
   }
 
-  function closeSessions() {
-    error = '';
+  function closeControl(reload = true, updateHash = true) {
+    inspectedUser = null;
     sessionUser = null;
     sessionResult = null;
-  }
-
-  function closeControl() {
-    inspectedUser = null;
     error = '';
     notice = '';
+    if (updateHash) syncHash('overview');
+    if (reload) void load(page);
   }
 
-  async function openControl(user: UserIdentity, section: ControlSection = 'profile') {
+  function selectSection(section: ControlSection, updateHash = true) {
+    controlSection = section;
+    if (!inspectedUser) return;
+    if (updateHash) syncHash(section);
+    if (section === 'sessions' && sessionUser?.userId !== inspectedUser.userId) void openSessions(inspectedUser);
+    if (section === 'verification' || section === 'authentication') void loadWorkflowContext();
+  }
+
+  async function loadWorkflowContext() {
+    if (workflowLoaded) return;
+    try {
+      const [applications, policy] = await Promise.all([adminApi.workflowApplications(1), adminApi.workflowSettings()]);
+      workflowApplications = applications.applications;
+      workflowSettings = policy;
+      if (!workflowApplicationId) {
+        const candidate = workflowApplications.find(item => item.status === RecordStatus.Active && item.resources.length > 0);
+        if (candidate) {
+          workflowApplicationId = candidate.applicationId;
+          workflowResource = adminApi.extended ? candidate.resources[0] ?? '' : 'haley.identity';
+        }
+      }
+      workflowLoaded = true;
+    } catch (reason) {
+      error = message(reason);
+    }
+  }
+
+  async function openControl(user: UserIdentity, section: ControlSection = 'overview', updateHash = true) {
     inspectedUser = user;
     controlSection = section;
-    lifecycleSection = 'identity';
+    if (updateHash) syncHash(section);
     targetStatus = user.status === RecordStatus.Active ? RecordStatus.Suspended : RecordStatus.Active;
     reasonCode = 'superadmin_change';
     inspectedProfile = null;
-    profileDisplayName = user.displayName;
+    inspectedEmailContacts = [];
     inspectedMfa = [];
     identityPolicies = [];
     inspectedMfaOverrides = [];
@@ -315,8 +401,11 @@
     inspectorLoading = true;
     error = '';
     notice = '';
+    window.scrollTo({ top: 0 });
+    void loadWorkflowContext();
+    if (section === 'sessions') void openSessions(user);
     try {
-      const [profile, mfa, attempts, contacts, origins, federation, challenges, grants, policies, mfaOverrides, protectionPolicy] = await Promise.all([
+      const [profile, mfa, attempts, contacts, origins, federation, challenges, grants, policies, mfaOverrides, protectionPolicy, emailContacts] = await Promise.all([
         adminApi.userProfile(user.userId),
         adminApi.userMfa(user.userId),
         adminApi.userLoginAttempts(user.userId, 1, 10),
@@ -327,11 +416,12 @@
         adminApi.extended ? adminApi.identityOperations('VerificationGrants', user.userId, '', 1, 10) : Promise.resolve({ records: [] }),
         adminApi.extended ? adminApi.identityClientPolicies() : Promise.resolve([]),
         adminApi.extended ? adminApi.userMfaPolicyOverrides(user.userId) : Promise.resolve([]),
-        adminApi.loginProtectionPolicy()
+        adminApi.loginProtectionPolicy(),
+        adminApi.userEmailContacts(user.userId)
       ]);
       if (inspectedUser?.userId !== user.userId) return;
       inspectedProfile = profile;
-      profileDisplayName = profile.displayName;
+      inspectedEmailContacts = emailContacts;
       inspectedMfa = mfa;
       inspectedAttempts = attempts;
       identityPolicies = policies;
@@ -356,33 +446,6 @@
     try {
       inspectedAttempts = await adminApi.userLoginAttempts(inspectedUser.userId, requestedPage, 10);
     } catch (reason) { error = message(reason); }
-  }
-
-  async function saveDisplayName() {
-    if (!inspectedUser || !inspectedProfile) return;
-    const displayName = profileDisplayName.trim().replace(/\s+/g, ' ');
-    if (!displayName || displayName.length > 250) {
-      error = 'Display name is required and cannot exceed 250 characters.';
-      return;
-    }
-
-    saving = true;
-    error = '';
-    notice = '';
-    const userId = inspectedUser.userId;
-    try {
-      const profile = await adminApi.updateUserDisplayName(userId, displayName);
-      if (inspectedUser?.userId !== userId) return;
-      inspectedProfile = profile;
-      profileDisplayName = profile.displayName;
-      inspectedUser = { ...inspectedUser, displayName: profile.displayName };
-      users = users.map(user => user.userId === userId ? { ...user, displayName: profile.displayName } : user);
-      notice = `Display name changed to ${profile.displayName}.`;
-    } catch (reason) {
-      error = message(reason);
-    } finally {
-      saving = false;
-    }
   }
 
   function resetPasswordForInspectedUser() {
@@ -436,6 +499,30 @@
 
   function currentMfaMethods(): MfaMethod[] {
     return inspectedMfa.filter(method => method.status === RecordStatus.Active || method.status === RecordStatus.Pending);
+  }
+
+  function unusedRetiredMfaMethods(): MfaMethod[] {
+    return inspectedMfa.filter(method => method.status === RecordStatus.Retired && !method.verifiedAt && !method.lastUsedAt);
+  }
+
+  async function pruneUnusedMfaMethods() {
+    const user = inspectedUser;
+    const count = unusedRetiredMfaMethods().length;
+    if (!user || !count || !await requestConfirmation({
+      title: 'Prune unused authenticators?',
+      message: `Permanently remove unused retired authenticators for ${user.displayName}. Only methods that were never confirmed or used are eligible. This cannot be undone.`,
+      confirmLabel: 'Prune unused',
+      tone: 'danger'
+    })) return;
+    saving = true; error = '';
+    try {
+      const removed = await adminApi.pruneUnusedUserMfaMethods(user.userId);
+      const methods = await adminApi.userMfa(user.userId);
+      if (inspectedUser?.userId === user.userId) inspectedMfa = methods;
+      notice = removed ? `Pruned ${removed} unused retired authenticator${removed === 1 ? '' : 's'}.`
+        : 'No unused retired authenticators could be pruned. Methods referenced by another enrollment are retained.';
+    } catch (reason) { error = message(reason); }
+    finally { saving = false; }
   }
 
   function emailContactRecords(): IdentityOperationalRecord[] {
@@ -530,6 +617,35 @@
     finally { saving = false; }
   }
 
+  async function refreshEmailContacts() {
+    const userId = inspectedUser?.userId;
+    if (!userId) return;
+    try {
+      const contacts = await adminApi.userEmailContacts(userId);
+      if (inspectedUser?.userId === userId) inspectedEmailContacts = contacts;
+    } catch (reason) { if (inspectedUser?.userId === userId) error = message(reason); }
+  }
+
+  async function setEmailVerification(contact: AccountEmailContact, isVerified: boolean) {
+    if (!inspectedUser || !verificationReason.trim()) return;
+    const user = inspectedUser;
+    const reasonCode = verificationReason.trim();
+    if (!await requestConfirmation({
+      title: isVerified ? 'Break-glass verify this email?' : 'Mark this email unverified?',
+      message: isVerified
+        ? `${contact.email} will be marked verified and recovery enabled for ${user.displayName}, without a code or link. Confirm ownership independently before proceeding. Account status is unchanged. Reason: ${reasonCode}.`
+        : `${contact.email} will become unverified for ${user.displayName}. Email recovery will be disabled and outstanding email challenges and grants invalidated. Account status is unchanged. Reason: ${reasonCode}.`,
+      confirmLabel: isVerified ? 'Break-glass verify' : 'Mark unverified', tone: 'danger'
+    })) return;
+    saving = true; error = '';
+    try {
+      await adminApi.setEmailVerification(user.userId, contact.contactId, isVerified, reasonCode);
+      await openControl(user, 'verification');
+      notice = isVerified ? 'Email verified by administrator. Recovery enabled.' : 'Email marked unverified. Outstanding email proofs invalidated.';
+    } catch (reason) { error = message(reason); }
+    finally { saving = false; }
+  }
+
   async function overrideEmailVerification(record: IdentityOperationalRecord) {
     if (!inspectedUser || !record.recordId || record.area !== 'Contacts' || record.type !== 'email' || record.status !== RecordStatus.Pending) return;
     if (!await requestConfirmation({
@@ -619,7 +735,7 @@
   }
 
   function message(reason: unknown) {
-    return reason instanceof ApiError ? reason.message : 'The identity service is unavailable.';
+    return reason instanceof ApiError ? reason.message : reason instanceof Error ? reason.message : 'The identity service is unavailable.';
   }
 
   function date(value: string | null) {
@@ -648,253 +764,282 @@
   }
 </script>
 
-<section class="page">
-  <header class="page-header">
-    <div><p class="eyebrow">Identity authority</p><h1>Users & sessions</h1></div>
-    <div class="page-actions">
-      {#if adminApi.extended}<button class="quiet" onclick={openImportDialog}>⇧ Import CSV</button>{/if}
-      <button class="quiet" disabled={selectedUserIds.size === 0} onclick={openResetDialog}>Reset selected ({selectedUserIds.size})</button>
-      <button class="primary" onclick={openCreateDialog}>＋ Add identity</button>
-    </div>
-  </header>
-
-  <div class="toolbar panel compact">
-    <div class="search-field"><span>⌕</span><input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(1)} placeholder="Search name, username, or UUID" /></div>
-    <select bind:value={statusFilter} onchange={() => void load(1)} aria-label="Filter by status">
-      <option value="">All lifecycle states</option>
-      {#each statuses as status}<option value={status}>{statusLabel(status)}</option>{/each}
-    </select>
-    <select bind:value={activityFilter} onchange={() => void load(1)} aria-label="Filter by sign-in or password state">
-      <option value="All">All activity states</option>
-      <option value="NeverLoggedIn">Never logged in</option>
-      <option value="HasLoggedIn">Has logged in</option>
-      <option value="PasswordChangeRequired">Password change required</option>
-    </select>
-    <select bind:value={sortOrder} onchange={() => void load(1)} aria-label="Sort identities">
-      <option value="CreatedNewest">Newest identities</option>
-      <option value="CreatedOldest">Oldest identities</option>
-      <option value="LastLoginNewest">Latest login first</option>
-      <option value="LastLoginOldest">Oldest login first</option>
-    </select>
-    <select bind:value={pageSize} onchange={() => void load(1)} aria-label="Identities per page">
-      {#each pageSizes as size}<option value={size}>{size} per page</option>{/each}
-    </select>
-    <button class="quiet" onclick={() => void load(page)}>Refresh</button>
-  </div>
-
-  {#if notice && !userDialogOpen()}<div class="notice success" role="status"><strong>Completed</strong><span>{notice}</span><button aria-label="Dismiss" onclick={() => notice = ''}>×</button></div>{/if}
-
-  <div class="panel table-panel">
-    <div class="panel-heading"><div><p class="eyebrow">Directory</p><h3>Identity records</h3></div><small>{pageSize} records per page · UUIDv7 public references</small></div>
-    <div class="table-wrap">
-      <table class="identity-directory">
-        <thead><tr><th><span class="identity-select-all"><input type="checkbox" aria-label="Select all visible users" checked={users.length > 0 && users.every(user => selectedUserIds.has(user.userId))} onchange={toggleAllVisible} />Identity</span></th><th>Status</th><th>Created</th></tr></thead>
-        <tbody>
-          {#if loading}
-            <tr><td colspan="3"><div class="empty-state">Loading identity records…</div></td></tr>
-          {:else if users.length === 0}
-            <tr><td colspan="3"><div class="empty-state">No identities match this view.</div></td></tr>
-          {:else}
-            {#each users as user}
-              <tr class="identity-primary-row" class:selected-row={selectedUserIds.has(user.userId)}>
-                <td><div class="identity-primary-cell"><input type="checkbox" aria-label={`Select ${user.displayName}`} checked={selectedUserIds.has(user.userId)} onchange={() => toggleSelection(user.userId)} /><div class="identity-cell"><span>{user.displayName.slice(0, 1).toUpperCase()}</span><div><button type="button" class="copy-link identity-copy-line identity-name" class:copied={copiedIdentityValue === `name:${user.userId}`} title={`Copy ${user.displayName}`} aria-label={`Copy display name ${user.displayName}`} onclick={() => void copyIdentityValue(`name:${user.userId}`, user.displayName)}>{copiedIdentityValue === `name:${user.userId}` ? 'Copied' : user.displayName}</button></div></div></div></td>
-                <td><span class="status-pill {statusClass(user.status)}">{statusLabel(user.status)}</span>{#if user.passwordChangeRequired}<small class="password-flag">Password change required</small>{/if}</td>
-                <td title={date(user.createdAt)}>{date(user.createdAt)}</td>
-              </tr>
-              <tr class="identity-secondary-row" class:selected-row={selectedUserIds.has(user.userId)}>
-                <td colspan="3"><div class="identity-secondary-content"><div class="identity-meta-lines">{#if user.username}<button type="button" class="copy-link identity-copy-line" class:copied={copiedIdentityValue === `username:${user.userId}`} title={`Copy ${user.username}`} aria-label={`Copy email or username ${user.username}`} onclick={() => void copyIdentityValue(`username:${user.userId}`, user.username!)}>{copiedIdentityValue === `username:${user.userId}` ? 'Copied' : user.username}</button>{:else}<span class="identity-copy-line">No username</span>{/if}<button type="button" class="copy-link identity-copy-line" class:copied={copiedIdentityValue === `id:${user.userId}`} title={`Copy ${user.userId}`} aria-label={`Copy user ID ${user.userId}`} onclick={() => void copyIdentityValue(`id:${user.userId}`, user.userId)}>{copiedIdentityValue === `id:${user.userId}` ? 'Copied' : user.userId}</button></div><div class="row-actions"><button onclick={() => void openSessions(user)}>Sessions</button>{#if adminApi.extended}<button onclick={() => onAccess(user.userId)}>Access</button>{/if}<button class="primary-row-action" onclick={() => void openControl(user)}>Control</button></div></div></td>
-              </tr>
-            {/each}
-          {/if}
-        </tbody>
-      </table>
-    </div>
-    {#if users.length > 0}
-      <div class="session-pagination table-pagination">
-        <small>Showing {(page - 1) * pageSize + 1}–{(page - 1) * pageSize + users.length}</small>
-        <div><button disabled={loading || page <= 1} onclick={() => void changeUserPage(page - 1)}>Previous</button><span>Page {page}</span><button disabled={loading || !hasNext} onclick={() => void changeUserPage(page + 1)}>Next</button></div>
-      </div>
-    {/if}
-  </div>
-</section>
-
-{#if sessionUser}
-  <div class="modal-backdrop" role="presentation" onclick={(event) => event.currentTarget === event.target && closeSessions()}>
-    <div class="modal session-modal" role="dialog" aria-modal="true" aria-labelledby="sessions-title">
-      <div class="modal-head">
-        <div><p class="eyebrow">Identity sessions</p><h2 id="sessions-title">{sessionUser.displayName}</h2><small>{sessionUser.username ?? 'No username'} · {sessionUser.userId}</small></div>
-        <button class="icon-button" aria-label="Close sessions" onclick={closeSessions}>×</button>
-      </div>
-      <div class="session-panel">
-        <div class="session-toolbar">
-          <div class="session-tabs" role="tablist" aria-label="Session view">
-            <button class:active={sessionView === RecordStatus.Active} role="tab" aria-selected={sessionView === RecordStatus.Active} onclick={() => void changeSessionView(RecordStatus.Active)}>Active</button>
-            <button class:active={sessionView === 'all'} role="tab" aria-selected={sessionView === 'all'} onclick={() => void changeSessionView('all')}>All</button>
-          </div>
-          <small>{sessionResult?.sessions.length ?? 0} shown · {sessionView === RecordStatus.Active ? 'active only' : 'all states'}</small>
-        </div>
-        {#if sessionLoading}
-          <p class="session-empty">Loading sessions…</p>
-        {:else if (sessionResult?.sessions.length ?? 0) === 0}
-          <p class="session-empty">{sessionView === RecordStatus.Active ? 'No active sessions for this identity.' : 'No sessions recorded for this identity.'}</p>
-        {:else}
-          <div class="session-list">
-            {#each sessionResult?.sessions ?? [] as session}
-              <div class="session-item">
-                <span class:active-dot={isActiveSession(session)}></span>
-                <div><strong>{sessionStatus(session)}{session.resource ? ` · ${session.resource}` : ''}</strong><small>{session.sessionId} · client {session.applicationId ?? session.clientId ?? 'not recorded'} · last seen {date(session.lastSeenAt)} · expires {date(session.expiresAt)}{session.endedAt ? ` · ended ${date(session.endedAt)}` : ''}</small></div>
-                {#if isActiveSession(session)}<button class="danger-text" onclick={() => revoke(session.sessionId, sessionUser!.userId)}>Revoke</button>{/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#if sessionResult && sessionResult.sessions.length > 0}
-          <div class="session-pagination">
-            <small>Showing {(sessionResult.page - 1) * sessionResult.pageSize + 1}–{(sessionResult.page - 1) * sessionResult.pageSize + sessionResult.sessions.length}</small>
-            <div><button disabled={sessionLoading || sessionResult.page <= 1} onclick={() => void changeSessionPage(sessionResult!.page - 1)}>Previous</button><span>Page {sessionResult.page}</span><button disabled={sessionLoading || !sessionResult.hasNext} onclick={() => void changeSessionPage(sessionResult!.page + 1)}>Next</button></div>
-          </div>
-        {/if}
-      </div>
-    </div>
-  </div>
-{/if}
-
 {#if inspectedUser}
-  <div class="modal-backdrop" role="presentation" onclick={(event) => event.currentTarget === event.target && closeControl()}>
-    <div class="modal identity-control-modal" role="dialog" aria-modal="true" aria-labelledby="control-title">
-      <div class="modal-head control-modal-head">
-        <div><p class="eyebrow">Identity control</p><h2 id="control-title">{inspectedUser.displayName}</h2><small>{inspectedUser.username ?? 'No username'} · {inspectedUser.userId}</small></div>
-        <div class="control-head-actions"><span class="status-pill {statusClass(inspectedUser.status)}">{statusLabel(inspectedUser.status)}</span><button class="icon-button" aria-label="Close identity control" onclick={closeControl}>×</button></div>
-      </div>
-      <div class="identity-control-layout">
-        <nav class="control-nav" aria-label="Identity controls">
-          <button class:active={controlSection === 'profile'} aria-current={controlSection === 'profile' ? 'page' : undefined} onclick={() => controlSection = 'profile'}><span>Profile</span><small>Identity details</small></button>
-          <button class:active={controlSection === 'mfa'} aria-current={controlSection === 'mfa' ? 'page' : undefined} onclick={() => controlSection = 'mfa'}><span>MFA</span><small>Authenticators</small></button>
-          <button class:active={controlSection === 'attempts'} aria-current={controlSection === 'attempts' ? 'page' : undefined} onclick={() => controlSection = 'attempts'}><span>Attempts</span><small>Sign-in evidence</small></button>
-          <button class:active={controlSection === 'lifecycle'} aria-current={controlSection === 'lifecycle' ? 'page' : undefined} onclick={() => controlSection = 'lifecycle'}><span>Lifecycle</span><small>Status & verification</small></button>
-        </nav>
-
-        <div class="control-content">
-          {#if notice}<div class="notice success" role="status"><strong>Completed</strong><span>{notice}</span><button aria-label="Dismiss" onclick={() => notice = ''}>×</button></div>{/if}
-          {#if inspectorLoading}
-            <div class="empty-state">Loading identity controls…</div>
-          {:else if controlSection === 'profile'}
-            <article class="panel compact control-panel">
-              <div class="panel-heading"><div><p class="eyebrow">Profile</p><h3>{inspectedProfile?.preferredName ?? inspectedProfile?.displayName ?? inspectedUser.displayName}</h3></div></div>
-              <form class="profile-display-name-form" onsubmit={(event) => { event.preventDefault(); void saveDisplayName(); }}>
-                <label>Display name<input bind:value={profileDisplayName} required maxlength="250" autocomplete="off" /></label>
-                <button class="primary" disabled={saving || !profileDisplayName.trim() || profileDisplayName.trim().replace(/\s+/g, ' ') === inspectedProfile?.displayName}>{saving ? 'Saving…' : 'Save display name'}</button>
-              </form>
-              <dl class="detail-list">
-                <div><dt>Username</dt><dd>{inspectedUser.username ?? 'Not assigned'}</dd></div>
-                <div><dt>Display name</dt><dd>{inspectedProfile?.displayName ?? inspectedUser.displayName}</dd></div>
-                <div><dt>Preferred name</dt><dd>{inspectedProfile?.preferredName ?? '-'}</dd></div>
-                <div><dt>Given / family</dt><dd>{inspectedProfile?.givenName ?? '-'} / {inspectedProfile?.familyName ?? '-'}</dd></div>
-                <div><dt>Locale / time zone</dt><dd>{inspectedProfile?.locale ?? '-'} / {inspectedProfile?.timeZone ?? '-'}</dd></div>
-                <div><dt>Password state</dt><dd>{inspectedUser.passwordChangeRequired ? 'Change required' : 'Current'}</dd></div>
-                <div><dt>Last authentication</dt><dd>{date(inspectedUser.lastAuthenticatedAt)}</dd></div>
-                <div><dt>Created</dt><dd>{date(inspectedUser.createdAt)}</dd></div>
-              </dl>
-            </article>
-          {:else if controlSection === 'mfa'}
-            <article class="panel compact control-panel">
-              <div class="panel-heading"><div><p class="eyebrow">MFA posture</p><h3>{currentMfaMethods().length} current methods</h3></div><button class="quiet" disabled={saving} onclick={() => void beginTotpEnrollment()}>{currentMfaMethods().some(method => method.kind === 'Totp' && method.status === RecordStatus.Pending) ? 'Restart enrollment' : 'Enroll authenticator'}</button></div>
-              <p class="form-note mfa-ownership-note">Authenticators belong to this identity. The application login policy decides when an enrolled method is required. The QR is shown only during enrollment or replacement and is not recoverable afterward.</p>
-              {#if adminApi.extended}<div class="mfa-policy-panel">
-                <div><strong>Identity enforcement exceptions</strong><p class="form-note">Domain rules are configured under Federation. An identity exception applies only to the selected client and audience, and takes priority over the domain rule.</p></div>
-                <div class="mfa-policy-list">
-                  {#each identityPolicies as policy}
-                    <label><span><strong>{policy.resource}</strong><small>Client {policy.clientId} · inherited default: {policy.mfaRequirement}</small></span><select value={userMfaRequirement(policy)} disabled={saving} onchange={(event) => void changeUserMfaRequirement(policy, (event.currentTarget as HTMLSelectElement).value as 'inherit' | 'none' | 'required')}><option value="inherit">Inherit domain/client policy</option><option value="required">Require MFA</option><option value="none">No MFA (exception)</option></select></label>
-                  {:else}<p class="muted control-empty">No client/audience onboarding policies are configured. Add one under Federation before creating an identity exception.</p>{/each}
-                </div>
-              </div>
-              {/if}
-              <div class="security-list">
-                {#each currentMfaMethods() as method}
-                  <div><span class="status-pill {method.status === RecordStatus.Active ? 'active' : 'pending'}">{statusLabel(method.status)}</span><div><strong>{method.kind}{method.label ? ` · ${method.label}` : ''}</strong><small>Verified {date(method.verifiedAt)} · last used {date(method.lastUsedAt)}</small>{#if method.kind === 'Totp' && method.status === RecordStatus.Pending}<small>The QR ticket is one-time and cannot be recovered. Discard this method or restart enrollment.</small>{/if}</div>{#if method.kind === 'Totp' && method.status === RecordStatus.Active}<div class="row-actions"><button class="primary-row-action" disabled={saving} onclick={() => beginTotpTest(method)}>Test</button><button disabled={saving} onclick={() => void beginTotpEnrollment(method.methodId)}>Replace</button><button class="danger-text" disabled={saving} onclick={() => void retireMfaMethod(method)}>Retire</button></div>{:else if method.kind === 'Totp' && method.status === RecordStatus.Pending}<div class="row-actions"><button class="danger-text" disabled={saving} onclick={() => void retireMfaMethod(method)}>Discard pending</button></div>{/if}</div>
-                {:else}<p class="muted control-empty">No active or pending MFA methods are registered.</p>{/each}
-              </div>
-              {#if inspectedMfa.length > currentMfaMethods().length}<p class="form-note">{inspectedMfa.length - currentMfaMethods().length} retired method(s) remain in operational history and are hidden here.</p>{/if}
-              {#if totpTestMethod}
-                <div class="mfa-test-panel">
-                  <h3>Test active authenticator</h3>
-                  <p class="form-note">Enter the current six-digit code for <strong>{totpTestMethod.label ?? 'this authenticator'}</strong>. Identity performs the same verification used during login and consumes this 30-second code to prevent replay.</p>
-                  <label>Current authenticator code<input bind:value={totpTestCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" /></label>
-                  <div class="modal-actions"><button class="quiet" disabled={saving} onclick={() => { totpTestMethod = null; totpTestCode = ''; }}>Cancel</button><button class="primary" disabled={saving || !/^[0-9]{6}$/.test(totpTestCode)} onclick={() => void testTotp()}>{saving ? 'Testing…' : 'Test code'}</button></div>
-                </div>
-              {/if}
-              {#if totpEnrollment}
-                <div class="mfa-test-panel">
-                  <h3>Scan this authenticator QR code</h3>
-                  <p class="form-note danger-note">This is a live enrollment. Scan the QR with Microsoft Authenticator, then verify a code. Existing MFA remains active until a replacement succeeds.</p>
-                  <div class="qr-preview">{@html totpEnrollment.qrCodeSvg}</div>
-                  <label>Six-digit test code<input bind:value={totpCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" /></label>
-                  <div class="modal-actions"><button class="quiet" onclick={() => void cancelTotpEnrollment()}>Cancel</button><button class="primary" disabled={saving || !/^[0-9]{6}$/.test(totpCode)} onclick={() => void confirmTotpEnrollment()}>Verify & activate</button></div>
-                </div>
-              {/if}
-              {#if totpCompletion}
-                <div class="bulk-result"><strong>Recovery codes - save now</strong><div class="recovery-grid">{#each totpCompletion.recoveryCodes as code}<code>{code}</code>{/each}</div></div>
-              {/if}
-            </article>
-          {:else if controlSection === 'attempts'}
-            <article class="panel table-panel control-panel">
-              <div class="panel-heading"><div><p class="eyebrow">Sign-in protection</p><h3>Login attempts</h3></div>{#if inspectedUser.status === RecordStatus.Locked}<button class="quiet danger-text" disabled={saving} onclick={() => void releaseLoginProtection()}>Release lock</button>{/if}</div>
-              <p class="form-note">Identity locks the account after {loginProtectionPolicy.maxFailedAttempts} consecutive invalid passwords and revokes its active sessions. Automatic locks expire after {Math.ceil(loginProtectionPolicy.lockoutSeconds / 60)} minutes. Releasing a lock restores sign-in eligibility immediately; it never erases this history.</p>
-              <div class="table-wrap"><table><thead><tr><th>Outcome</th><th>Reason</th><th>Client</th><th>Attempted</th></tr></thead><tbody>
-                {#each inspectedAttempts?.attempts ?? [] as attempt}<tr><td><span class="status-pill {attempt.outcome === 'success' ? 'active' : 'retired'}">{attempt.outcome}</span></td><td>{attempt.reasonCode ?? '-'}</td><td>{attempt.clientId ?? 'Not resolved'}</td><td>{date(attempt.occurredAt)}</td></tr>{:else}<tr><td colspan="4"><div class="empty-state">No login attempts are recorded for this identity.</div></td></tr>{/each}
-              </tbody></table></div>
-              {#if inspectedAttempts && inspectedAttempts.attempts.length > 0}<div class="session-pagination control-pagination"><small>Showing {(inspectedAttempts.page - 1) * inspectedAttempts.pageSize + 1}–{(inspectedAttempts.page - 1) * inspectedAttempts.pageSize + inspectedAttempts.attempts.length}</small><div><button disabled={inspectedAttempts.page <= 1} onclick={() => void loadLoginAttempts(inspectedAttempts!.page - 1)}>Previous</button><span>Page {inspectedAttempts.page}</span><button disabled={!inspectedAttempts.hasNext} onclick={() => void loadLoginAttempts(inspectedAttempts!.page + 1)}>Next</button></div></div>{/if}
-            </article>
-          {:else}
-            <div class="lifecycle-stack">
-              <div class="segmented lifecycle-tabs" role="tablist" aria-label="Lifecycle sections">
-                {#if adminApi.extended}<button role="tab" aria-selected={lifecycleSection === 'evidence'} class:active={lifecycleSection === 'evidence'} onclick={() => lifecycleSection = 'evidence'}>Evidence</button>{/if}
-                <button role="tab" aria-selected={lifecycleSection === 'identity'} class:active={lifecycleSection === 'identity'} onclick={() => lifecycleSection = 'identity'}>Identity</button>
-                {#if adminApi.extended}<button role="tab" aria-selected={lifecycleSection === 'verification'} class:active={lifecycleSection === 'verification'} onclick={() => lifecycleSection = 'verification'}>Verification</button>{/if}
-              </div>
-              {#if lifecycleSection === 'identity'}
-              <article class="panel compact control-panel">
-                <div class="panel-heading"><div><p class="eyebrow">Lifecycle control</p><h3>{statusLabel(inspectedUser.status)} identity</h3></div><button class="quiet" type="button" onclick={resetPasswordForInspectedUser}>Reset password</button></div>
-                {#if inspectedUser.status === RecordStatus.Retired}
-                  <p class="form-note">Restore makes this identity active again. Previously revoked sessions remain revoked.</p>
-                  <div class="lifecycle-actions"><button class="primary" disabled={saving} onclick={() => void restoreUser(inspectedUser!)}>Restore identity</button><button class="quiet danger-text" disabled={saving} onclick={() => void permanentlyDeleteUser(inspectedUser!)}>Delete permanently</button></div>
-                {:else}
-                  <form class="lifecycle-form" onsubmit={(event) => { event.preventDefault(); void changeStatus(); }}>
-                    <label>New status<select bind:value={targetStatus}>{#each statuses as status}<option value={status}>{statusLabel(status)}</option>{/each}</select></label>
-                    <label>Reason code<input bind:value={reasonCode} required maxlength="64" pattern="[a-zA-Z0-9_.-]+" /></label>
-                    <button class="primary" disabled={saving}>{saving ? 'Applying…' : 'Apply change'}</button>
-                  </form>
-                  <p class="form-note">Any move away from Active revokes active sessions and refresh-token families. Retirement is reversible; permanent deletion is available only after retirement.</p>
-                {/if}
-              </article>
-              {:else if lifecycleSection === 'verification'}
-              <article class="panel compact control-panel">
-                <div class="panel-heading"><div><p class="eyebrow">Emergency verification</p><h3>Email ownership</h3></div><small>{emailContactRecords().length} email contact{emailContactRecords().length === 1 ? '' : 's'}</small></div>
-                <p class="form-note danger-note">Break-glass verification bypasses the normal OTP or link ceremony. Use it only after an administrator has independently confirmed mailbox ownership; Kida records the administrative attestation.</p>
-                <div class="security-list">
-                  {#each emailContactRecords() as contact}
-                    <div><span class="status-pill {contact.status === RecordStatus.Verified ? 'active' : contact.status}">{statusLabel(contact.status)}</span><div><strong>{contact.detail ?? 'Email contact'}</strong><small>Added {date(contact.occurredAt)}{contact.completedAt ? ` · completed ${date(contact.completedAt)}` : ''}</small></div>{#if contact.status === RecordStatus.Pending && contact.recordId}<button class="danger-text" disabled={saving} onclick={() => void overrideEmailVerification(contact)}>Break-glass verify</button>{/if}</div>
-                  {:else}
-                    {#if usernameLooksLikeEmail(inspectedUser.username)}
-                      <div class="empty-action"><p class="form-note">The login identifier <strong>{inspectedUser.username}</strong> is email-shaped but is not yet recorded as a contact. Record it as pending before verifying ownership.</p><button class="primary" disabled={saving} onclick={() => void recordLoginEmailContact()}>{saving ? 'Recording…' : 'Record pending email'}</button></div>
-                    {:else}
-                      <p class="muted control-empty">No email contact is recorded for this identity.</p>
-                    {/if}
-                  {/each}
-                </div>
-              </article>
-              {:else}
-              <article class="panel table-panel control-panel">
-                <div class="panel-heading"><div><p class="eyebrow">Lifecycle evidence</p><h3>Contacts, origin, federation, and verification</h3></div><small>{inspectedEvidence.length} recent records</small></div>
-                <div class="table-wrap"><table><thead><tr><th>Area</th><th>Type</th><th>Status</th><th>Context</th><th>Observed</th></tr></thead><tbody>{#each inspectedEvidence as record}<tr><td>{record.area}</td><td>{record.type}</td><td><span class="status-pill {record.status === RecordStatus.Active || record.status === RecordStatus.Verified || record.status === OperationalStatus.Linked || record.status === OperationalStatus.Recorded ? 'active' : record.status === RecordStatus.Pending ? 'pending' : ''}">{operationalStatusLabel(record.status)}</span></td><td>{record.provider ?? record.detail ?? '-'}{#if record.attempts !== null}<small>{record.attempts} attempts</small>{/if}</td><td>{date(record.occurredAt)}</td></tr>{:else}<tr><td colspan="5"><div class="empty-state">No lifecycle evidence is recorded.</div></td></tr>{/each}</tbody></table></div>
-              </article>
-              {/if}
-            </div>
-          {/if}
+  <section class="page user-page">
+    <header class="page-header user-page-header">
+      <div class="user-page-title">
+        <button type="button" class="back-link" onclick={() => closeControl()}>← Back to accounts</button>
+        <div class="identity-cell user-identity">
+          <span>{inspectedUser.displayName.slice(0, 1).toUpperCase()}</span>
+          <div>
+            <h1>{inspectedUser.displayName}</h1>
+            <p class="user-subline">
+              <span class="status-pill {statusClass(inspectedUser.status)}">{statusLabel(inspectedUser.status)}</span>
+              {#if inspectedUser.passwordChangeRequired}<span class="status-pill pending">Password change required</span>{/if}
+              {#if inspectedUser.username}<button type="button" class="copy-link" class:copied={copiedIdentityValue === 'page:username'} title="Copy username" onclick={() => void copyIdentityValue('page:username', inspectedUser!.username!)}>{copiedIdentityValue === 'page:username' ? 'Copied' : inspectedUser.username}</button>{:else}<span>No username</span>{/if}
+              <span class="faint">·</span>
+              <button type="button" class="copy-link" class:copied={copiedIdentityValue === 'page:id'} title="Copy user ID" onclick={() => void copyIdentityValue('page:id', inspectedUser!.userId)}>{copiedIdentityValue === 'page:id' ? 'Copied' : inspectedUser.userId}</button>
+            </p>
+          </div>
         </div>
       </div>
+      <div class="page-actions">
+        {#if inspectedUser.status === RecordStatus.Locked}<button class="quiet danger-text" disabled={saving} onclick={() => void releaseLoginProtection()}>Release lock</button>{/if}
+        {#if adminApi.extended}<button class="quiet" onclick={() => onAccess(inspectedUser!.userId, inspectedUser!.displayName)}>Access</button>{/if}
+        <button class="quiet" onclick={resetPasswordForInspectedUser}>Reset password</button>
+      </div>
+    </header>
+
+    {#if notice}<div class="notice success" role="status"><strong>Completed</strong><span>{notice}</span><button aria-label="Dismiss" onclick={() => notice = ''}>×</button></div>{/if}
+
+    <div class="user-layout">
+      <nav class="user-rail" aria-label="Account sections">
+        {#each ['Account', 'Workflows'] as group}
+          <small class="user-rail-label">{group}</small>
+          {#each sections.filter(item => item.group === group) as item}
+            <button class:active={controlSection === item.id} aria-current={controlSection === item.id ? 'page' : undefined} onclick={() => selectSection(item.id)}><span>{item.label}</span><small>{item.detail}</small></button>
+          {/each}
+        {/each}
+      </nav>
+
+      <div class="user-content">
+        {#if inspectorLoading}
+          <div class="panel empty-state">Loading account…</div>
+        {:else if controlSection === 'overview'}
+          <article class="panel compact control-panel">
+            <div class="panel-heading"><div><p class="eyebrow">Account</p><h3>{inspectedProfile?.preferredName ?? inspectedUser.displayName}</h3></div><small>Created {date(inspectedUser.createdAt)}</small></div>
+            <dl class="detail-list">
+              <div><dt>Username</dt><dd>{inspectedUser.username ?? 'Not assigned'}</dd></div>
+              <div><dt>User ID</dt><dd><code>{inspectedUser.userId}</code></dd></div>
+              <div><dt>Status</dt><dd><span class="status-pill {statusClass(inspectedUser.status)}">{statusLabel(inspectedUser.status)}</span></dd></div>
+              <div><dt>Email verification</dt><dd>{#each inspectedEmailContacts as contact}<div><strong>{contact.email}</strong> · <span class="status-pill {contact.isVerified ? 'active' : 'pending'}">{contact.isVerified ? 'Verified' : 'Unverified'}</span>{#if contact.isVerified && !contact.recoveryEnabled}<small>Recovery disabled</small>{/if}</div>{:else}No recorded email contact{/each}</dd></div>
+              <div><dt>Password state</dt><dd>{inspectedUser.passwordChangeRequired ? 'Change required on next sign-in' : 'Current'}</dd></div>
+              <div><dt>Last authentication</dt><dd>{date(inspectedUser.lastAuthenticatedAt)}</dd></div>
+              <div><dt>Authenticators</dt><dd>{currentMfaMethods().length} current · {inspectedMfa.length - currentMfaMethods().length} retired</dd></div>
+              <div><dt>Profile modified</dt><dd>{date(inspectedProfile?.modifiedAt ?? null)}</dd></div>
+            </dl>
+          </article>
+          <IdentityWorkflows view="profile" bind:account={inspectedUser} applications={workflowApplications} bind:applicationId={workflowApplicationId} bind:resource={workflowResource} settings={workflowSettings} />
+
+        {:else if controlSection === 'security'}
+          <article class="panel compact control-panel">
+            <div class="panel-heading"><div><p class="eyebrow">MFA posture</p><h3>{currentMfaMethods().length} current method{currentMfaMethods().length === 1 ? '' : 's'}</h3></div><button class="quiet" disabled={saving} onclick={() => void beginTotpEnrollment()}>{currentMfaMethods().some(method => method.kind === 'Totp' && method.status === RecordStatus.Pending) ? 'Restart enrollment' : 'Enroll authenticator'}</button></div>
+            <p class="form-note mfa-ownership-note">Authenticators belong to this identity. The application login policy decides when an enrolled method is required. The QR is shown only during enrollment or replacement and is not recoverable afterward.</p>
+            {#if adminApi.extended}<div class="mfa-policy-panel">
+              <div><strong>Identity enforcement exceptions</strong><p class="form-note">Domain rules are configured under Federation. An identity exception applies only to the selected client and audience, and takes priority over the domain rule.</p></div>
+              <div class="mfa-policy-list">
+                {#each identityPolicies as policy}
+                  <label><span><strong>{policy.resource}</strong><small>Client {policy.clientId} · inherited default: {policy.mfaRequirement}</small></span><select value={userMfaRequirement(policy)} disabled={saving} onchange={(event) => void changeUserMfaRequirement(policy, (event.currentTarget as HTMLSelectElement).value as 'inherit' | 'none' | 'required')}><option value="inherit">Inherit domain/client policy</option><option value="required">Require MFA</option><option value="none">No MFA (exception)</option></select></label>
+                {:else}<p class="muted control-empty">No client/audience onboarding policies are configured. Add one under Federation before creating an identity exception.</p>{/each}
+              </div>
+            </div>
+            {/if}
+            <div class="security-list">
+              {#each currentMfaMethods() as method}
+                <div><span class="status-pill {method.status === RecordStatus.Active ? 'active' : 'pending'}">{statusLabel(method.status)}</span><div><strong>{method.kind}{method.label ? ` · ${method.label}` : ''}</strong><small>Verified {date(method.verifiedAt)} · last used {date(method.lastUsedAt)}</small>{#if method.kind === 'Totp' && method.status === RecordStatus.Pending}<small>The QR ticket is one-time and cannot be recovered. Discard this method or restart enrollment.</small>{/if}</div>{#if method.kind === 'Totp' && method.status === RecordStatus.Active}<div class="row-actions"><button class="primary-row-action" disabled={saving} onclick={() => beginTotpTest(method)}>Test</button><button disabled={saving} onclick={() => void beginTotpEnrollment(method.methodId)}>Replace</button><button class="danger-text" disabled={saving} onclick={() => void retireMfaMethod(method)}>Retire</button></div>{:else if method.kind === 'Totp' && method.status === RecordStatus.Pending}<div class="row-actions"><button class="danger-text" disabled={saving} onclick={() => void retireMfaMethod(method)}>Discard pending</button></div>{/if}</div>
+              {:else}<p class="muted control-empty">No active or pending MFA methods are registered.</p>{/each}
+            </div>
+            {#if inspectedMfa.length > currentMfaMethods().length}
+              <div class="panel-heading">
+                <p class="form-note">{inspectedMfa.length - currentMfaMethods().length} historical method(s) are hidden here. {unusedRetiredMfaMethods().length} retired method(s) were never confirmed or used.</p>
+                <button class="quiet danger-text" disabled={saving || !unusedRetiredMfaMethods().length} onclick={() => void pruneUnusedMfaMethods()}>Prune unused</button>
+              </div>
+            {/if}
+            {#if totpTestMethod}
+              <div class="mfa-test-panel">
+                <h3>Test active authenticator</h3>
+                <p class="form-note">Enter the current six-digit code for <strong>{totpTestMethod.label ?? 'this authenticator'}</strong>. Identity performs the same verification used during login and consumes this 30-second code to prevent replay.</p>
+                <label>Current authenticator code<input bind:value={totpTestCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" /></label>
+                <div class="modal-actions"><button class="quiet" disabled={saving} onclick={() => { totpTestMethod = null; totpTestCode = ''; }}>Cancel</button><button class="primary" disabled={saving || !/^[0-9]{6}$/.test(totpTestCode)} onclick={() => void testTotp()}>{saving ? 'Testing…' : 'Test code'}</button></div>
+              </div>
+            {/if}
+            {#if totpEnrollment}
+              <div class="mfa-test-panel">
+                <h3>Scan this authenticator QR code</h3>
+                <p class="form-note danger-note">This is a live enrollment. Scan the QR with Microsoft Authenticator, then verify a code. Existing MFA remains active until a replacement succeeds.</p>
+                <div class="qr-preview">{@html totpEnrollment.qrCodeSvg}</div>
+                <label>Six-digit test code<input bind:value={totpCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" /></label>
+                <div class="modal-actions"><button class="quiet" onclick={() => void cancelTotpEnrollment()}>Cancel</button><button class="primary" disabled={saving || !/^[0-9]{6}$/.test(totpCode)} onclick={() => void confirmTotpEnrollment()}>Verify & activate</button></div>
+              </div>
+            {/if}
+            {#if totpCompletion}
+              <div class="bulk-result"><strong>Recovery codes - save now</strong><div class="recovery-grid">{#each totpCompletion.recoveryCodes as code}<code>{code}</code>{/each}</div></div>
+            {/if}
+          </article>
+          <IdentityWorkflows view="recovery" bind:account={inspectedUser} applications={workflowApplications} bind:applicationId={workflowApplicationId} bind:resource={workflowResource} settings={workflowSettings} />
+
+        {:else if controlSection === 'sessions'}
+          <article class="panel compact control-panel">
+            <div class="panel-heading"><div><p class="eyebrow">Sessions</p><h3>{sessionView === RecordStatus.Active ? 'Active sessions' : 'All sessions'}</h3></div>
+              <div class="session-tabs" role="tablist" aria-label="Session view">
+                <button class:active={sessionView === RecordStatus.Active} role="tab" aria-selected={sessionView === RecordStatus.Active} onclick={() => void changeSessionView(RecordStatus.Active)}>Active</button>
+                <button class:active={sessionView === 'all'} role="tab" aria-selected={sessionView === 'all'} onclick={() => void changeSessionView('all')}>All</button>
+              </div>
+            </div>
+            {#if sessionLoading}
+              <p class="session-empty">Loading sessions…</p>
+            {:else if (sessionResult?.sessions.length ?? 0) === 0}
+              <p class="session-empty">{sessionView === RecordStatus.Active ? 'No active sessions for this identity.' : 'No sessions recorded for this identity.'}</p>
+            {:else}
+              <div class="session-list">
+                {#each sessionResult?.sessions ?? [] as session}
+                  <div class="session-item">
+                    <span class:active-dot={isActiveSession(session)}></span>
+                    <div><strong>{statusLabel(sessionStatus(session))}{session.resource ? ` · ${session.resource}` : ''}</strong><small>{session.sessionId} · client {session.applicationId ?? session.clientId ?? 'not recorded'} · last seen {date(session.lastSeenAt)} · expires {date(session.expiresAt)}{session.endedAt ? ` · ended ${date(session.endedAt)}` : ''}</small></div>
+                    {#if isActiveSession(session)}<button class="danger-text" onclick={() => revoke(session.sessionId, inspectedUser!.userId)}>Revoke</button>{/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if sessionResult && sessionResult.sessions.length > 0}
+              <div class="session-pagination">
+                <small>Showing {(sessionResult.page - 1) * sessionResult.pageSize + 1}–{(sessionResult.page - 1) * sessionResult.pageSize + sessionResult.sessions.length}</small>
+                <div><button disabled={sessionLoading || sessionResult.page <= 1} onclick={() => void changeSessionPage(sessionResult!.page - 1)}>Previous</button><span>Page {sessionResult.page}</span><button disabled={sessionLoading || !sessionResult.hasNext} onclick={() => void changeSessionPage(sessionResult!.page + 1)}>Next</button></div>
+              </div>
+            {/if}
+          </article>
+
+        {:else if controlSection === 'attempts'}
+          <article class="panel table-panel control-panel">
+            <div class="panel-heading"><div><p class="eyebrow">Sign-in protection</p><h3>Login attempts</h3></div>{#if inspectedUser.status === RecordStatus.Locked}<button class="quiet danger-text" disabled={saving} onclick={() => void releaseLoginProtection()}>Release lock</button>{/if}</div>
+            <p class="form-note">Identity locks the account after {loginProtectionPolicy.maxFailedAttempts} consecutive invalid passwords and revokes its active sessions. Automatic locks expire after {Math.ceil(loginProtectionPolicy.lockoutSeconds / 60)} minutes. Releasing a lock restores sign-in eligibility immediately; it never erases this history.</p>
+            <div class="table-wrap"><table><thead><tr><th>Outcome</th><th>Reason</th><th>Client</th><th>Attempted</th></tr></thead><tbody>
+              {#each inspectedAttempts?.attempts ?? [] as attempt}<tr><td><span class="status-pill {attempt.outcome === 'success' ? 'active' : 'retired'}">{attempt.outcome}</span></td><td>{attempt.reasonCode ?? '-'}</td><td>{attempt.clientId ?? 'Not resolved'}</td><td>{date(attempt.occurredAt)}</td></tr>{:else}<tr><td colspan="4"><div class="empty-state">No login attempts are recorded for this identity.</div></td></tr>{/each}
+            </tbody></table></div>
+            {#if inspectedAttempts && inspectedAttempts.attempts.length > 0}<div class="session-pagination control-pagination"><small>Showing {(inspectedAttempts.page - 1) * inspectedAttempts.pageSize + 1}–{(inspectedAttempts.page - 1) * inspectedAttempts.pageSize + inspectedAttempts.attempts.length}</small><div><button disabled={inspectedAttempts.page <= 1} onclick={() => void loadLoginAttempts(inspectedAttempts!.page - 1)}>Previous</button><span>Page {inspectedAttempts.page}</span><button disabled={!inspectedAttempts.hasNext} onclick={() => void loadLoginAttempts(inspectedAttempts!.page + 1)}>Next</button></div></div>{/if}
+          </article>
+
+        {:else if controlSection === 'verification'}
+          {#if !adminApi.extended}
+            <article class="panel compact control-panel">
+              <div class="panel-heading"><div><p class="eyebrow">Administrative verification</p><h3>Email ownership</h3></div></div>
+              <p class="form-note danger-note">Break-glass verify confirms ownership without a code or link and enables email recovery. Mark unverified withdraws that confirmation. Both actions record the administrator's reason and leave account status unchanged.</p>
+              <label>Reason code<input bind:value={verificationReason} required maxlength="100" disabled={saving} /></label>
+              <div class="security-list">
+                {#each inspectedEmailContacts as contact}
+                  <div><span class="status-pill {contact.isVerified ? 'active' : 'pending'}">{contact.isVerified ? 'Verified' : 'Unverified'}</span><div><strong>{contact.email}</strong><small>{contact.isVerified ? `Verified ${date(contact.verifiedAt)} · recovery ${contact.recoveryEnabled ? 'on' : 'off'}` : 'Mailbox ownership not confirmed'}</small></div>
+                    <button class="danger-text" disabled={saving || !verificationReason.trim()} onclick={() => void setEmailVerification(contact, true)}>Break-glass verify</button>
+                    {#if contact.isVerified}<button class="danger-text" disabled={saving || !verificationReason.trim()} onclick={() => void setEmailVerification(contact, false)}>Mark unverified</button>{/if}
+                  </div>
+                {:else}<p class="muted control-empty">No email contact is recorded for this identity.</p>{/each}
+              </div>
+            </article>
+          {/if}
+          <IdentityWorkflows view="verification" bind:account={inspectedUser} applications={workflowApplications} bind:applicationId={workflowApplicationId} bind:resource={workflowResource} settings={workflowSettings} onVerificationChanged={refreshEmailContacts} />
+          {#if adminApi.extended}
+            <article class="panel compact control-panel">
+              <div class="panel-heading"><div><p class="eyebrow">Emergency verification</p><h3>Email ownership</h3></div><small>{emailContactRecords().length} email contact{emailContactRecords().length === 1 ? '' : 's'}</small></div>
+              <p class="form-note danger-note">Break-glass verification bypasses the normal OTP or link ceremony. Use it only after an administrator has independently confirmed mailbox ownership; Kida records the administrative attestation.</p>
+              <div class="security-list">
+                {#each emailContactRecords() as contact}
+                  <div><span class="status-pill {contact.status === RecordStatus.Verified ? 'active' : contact.status}">{statusLabel(contact.status)}</span><div><strong>{contact.detail ?? 'Email contact'}</strong><small>Added {date(contact.occurredAt)}{contact.completedAt ? ` · completed ${date(contact.completedAt)}` : ''}</small></div>{#if contact.status === RecordStatus.Pending && contact.recordId}<button class="danger-text" disabled={saving} onclick={() => void overrideEmailVerification(contact)}>Break-glass verify</button>{/if}</div>
+                {:else}
+                  {#if usernameLooksLikeEmail(inspectedUser.username)}
+                    <div class="empty-action"><p class="form-note">The login identifier <strong>{inspectedUser.username}</strong> is email-shaped but is not yet recorded as a contact. Record it as pending before verifying ownership.</p><button class="primary" disabled={saving} onclick={() => void recordLoginEmailContact()}>{saving ? 'Recording…' : 'Record pending email'}</button></div>
+                  {:else}
+                    <p class="muted control-empty">No email contact is recorded for this identity.</p>
+                  {/if}
+                {/each}
+              </div>
+            </article>
+            <article class="panel table-panel control-panel">
+              <div class="panel-heading"><div><p class="eyebrow">Lifecycle evidence</p><h3>Contacts, origin, federation, and verification</h3></div><small>{inspectedEvidence.length} recent records</small></div>
+              <div class="table-wrap"><table><thead><tr><th>Area</th><th>Type</th><th>Status</th><th>Context</th><th>Observed</th></tr></thead><tbody>{#each inspectedEvidence as record}<tr><td>{record.area}</td><td>{record.type}</td><td><span class="status-pill {record.status === RecordStatus.Active || record.status === RecordStatus.Verified || record.status === OperationalStatus.Linked || record.status === OperationalStatus.Recorded ? 'active' : record.status === RecordStatus.Pending ? 'pending' : ''}">{operationalStatusLabel(record.status)}</span></td><td>{record.provider ?? record.detail ?? '-'}{#if record.attempts !== null}<small>{record.attempts} attempts</small>{/if}</td><td>{date(record.occurredAt)}</td></tr>{:else}<tr><td colspan="5"><div class="empty-state">No lifecycle evidence is recorded.</div></td></tr>{/each}</tbody></table></div>
+            </article>
+          {/if}
+
+        {:else if controlSection === 'authentication'}
+          <IdentityWorkflows view="authentication" bind:account={inspectedUser} applications={workflowApplications} bind:applicationId={workflowApplicationId} bind:resource={workflowResource} settings={workflowSettings} />
+
+        {:else}
+          <article class="panel compact control-panel">
+            <div class="panel-heading"><div><p class="eyebrow">Lifecycle control</p><h3>{statusLabel(inspectedUser.status)} identity</h3></div><button class="quiet" type="button" onclick={resetPasswordForInspectedUser}>Reset password</button></div>
+            {#if inspectedUser.status === RecordStatus.Retired}
+              <p class="form-note">Restore makes this identity active again. Previously revoked sessions remain revoked.</p>
+              <div class="lifecycle-actions"><button class="primary" disabled={saving} onclick={() => void restoreUser(inspectedUser!)}>Restore identity</button><button class="quiet danger-text" disabled={saving} onclick={() => void permanentlyDeleteUser(inspectedUser!)}>Delete permanently</button></div>
+            {:else}
+              <form class="lifecycle-form" onsubmit={(event) => { event.preventDefault(); void changeStatus(); }}>
+                <label>New status<select bind:value={targetStatus}>{#each statuses as status}<option value={status}>{statusLabel(status)}</option>{/each}</select></label>
+                <label>Reason code<input bind:value={reasonCode} required maxlength="64" pattern="[a-zA-Z0-9_.-]+" /></label>
+                <button class="primary" disabled={saving}>{saving ? 'Applying…' : 'Apply change'}</button>
+              </form>
+              <p class="form-note">Any move away from Active revokes active sessions and refresh-token families. Retirement is reversible; permanent deletion is available only after retirement.</p>
+            {/if}
+          </article>
+        {/if}
+      </div>
     </div>
-  </div>
+  </section>
+{:else}
+  <section class="page">
+    <header class="page-header">
+      <div><p class="eyebrow">Identity authority</p><h1>Accounts</h1></div>
+      <div class="page-actions">
+        {#if adminApi.extended}<button class="quiet" onclick={openImportDialog}>⇧ Import CSV</button>{/if}
+        <button class="quiet" disabled={selectedUserIds.size === 0} onclick={openResetDialog}>Reset selected ({selectedUserIds.size})</button>
+        <button class="primary" onclick={openCreateDialog}>＋ Add identity</button>
+      </div>
+    </header>
+
+    <div class="toolbar panel compact">
+      <div class="search-field"><span>⌕</span><input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(1)} placeholder="Search name, username, or UUID" /></div>
+      <select bind:value={statusFilter} onchange={() => void load(1)} aria-label="Filter by status">
+        <option value="">All lifecycle states</option>
+        {#each statuses as status}<option value={status}>{statusLabel(status)}</option>{/each}
+      </select>
+      <select bind:value={activityFilter} onchange={() => void load(1)} aria-label="Filter by sign-in or password state">
+        <option value="All">All activity states</option>
+        <option value="NeverLoggedIn">Never logged in</option>
+        <option value="HasLoggedIn">Has logged in</option>
+        <option value="PasswordChangeRequired">Password change required</option>
+      </select>
+      <select bind:value={sortOrder} onchange={() => void load(1)} aria-label="Sort identities">
+        <option value="CreatedNewest">Newest identities</option>
+        <option value="CreatedOldest">Oldest identities</option>
+        <option value="LastLoginNewest">Latest login first</option>
+        <option value="LastLoginOldest">Oldest login first</option>
+      </select>
+      <select bind:value={pageSize} onchange={() => void load(1)} aria-label="Identities per page">
+        {#each pageSizes as size}<option value={size}>{size} per page</option>{/each}
+      </select>
+      <button class="quiet" onclick={() => void load(page)}>Refresh</button>
+    </div>
+
+    {#if notice && !userDialogOpen()}<div class="notice success" role="status"><strong>Completed</strong><span>{notice}</span><button aria-label="Dismiss" onclick={() => notice = ''}>×</button></div>{/if}
+
+    <div class="panel table-panel">
+      <div class="panel-heading"><div><p class="eyebrow">Directory</p><h3>Identity records</h3></div><small>{pageSize} records per page · open an account to manage it in one place</small></div>
+      <div class="table-wrap">
+        <table class="identity-directory">
+          <thead><tr><th><span class="identity-select-all"><input type="checkbox" aria-label="Select all visible users" checked={users.length > 0 && users.every(user => selectedUserIds.has(user.userId))} onchange={toggleAllVisible} />Identity</span></th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>
+            {#if loading}
+              <tr><td colspan="3"><div class="empty-state">Loading identity records…</div></td></tr>
+            {:else if users.length === 0}
+              <tr><td colspan="3"><div class="empty-state">No identities match this view.</div></td></tr>
+            {:else}
+              {#each users as user}
+                <tr class="identity-primary-row" class:selected-row={selectedUserIds.has(user.userId)}>
+                  <td><div class="identity-primary-cell"><input type="checkbox" aria-label={`Select ${user.displayName}`} checked={selectedUserIds.has(user.userId)} onchange={() => toggleSelection(user.userId)} /><div class="identity-cell"><span>{user.displayName.slice(0, 1).toUpperCase()}</span><div><a class="copy-link identity-copy-line identity-name" href={accountHref(user)} target="_blank" rel="noopener" title={`Open ${user.displayName} in a new tab`}>{user.displayName}</a></div></div></div></td>
+                  <td><span class="status-pill {statusClass(user.status)}">{statusLabel(user.status)}</span>{#if user.passwordChangeRequired}<small class="password-flag">Password change required</small>{/if}</td>
+                  <td title={date(user.createdAt)}>{date(user.createdAt)}</td>
+                </tr>
+                <tr class="identity-secondary-row" class:selected-row={selectedUserIds.has(user.userId)}>
+                  <td colspan="3"><div class="identity-secondary-content"><div class="identity-meta-lines">{#if user.username}<button type="button" class="copy-link identity-copy-line" class:copied={copiedIdentityValue === `username:${user.userId}`} title={`Copy ${user.username}`} aria-label={`Copy email or username ${user.username}`} onclick={() => void copyIdentityValue(`username:${user.userId}`, user.username!)}>{copiedIdentityValue === `username:${user.userId}` ? 'Copied' : user.username}</button>{:else}<span class="identity-copy-line">No username</span>{/if}<button type="button" class="copy-link identity-copy-line" class:copied={copiedIdentityValue === `id:${user.userId}`} title={`Copy ${user.userId}`} aria-label={`Copy user ID ${user.userId}`} onclick={() => void copyIdentityValue(`id:${user.userId}`, user.userId)}>{copiedIdentityValue === `id:${user.userId}` ? 'Copied' : user.userId}</button></div><div class="row-actions"><a class="row-link" href={accountHref(user, 'sessions')} target="_blank" rel="noopener" title="Open sessions in a new tab">Sessions</a>{#if adminApi.extended}<button onclick={() => onAccess(user.userId, user.displayName)}>Access</button>{/if}<a class="row-link primary" href={accountHref(user)} target="_blank" rel="noopener" title="Open this account in a new tab">Open ↗</a></div></div></td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+      {#if users.length > 0}
+        <div class="session-pagination table-pagination">
+          <small>Showing {(page - 1) * pageSize + 1}–{(page - 1) * pageSize + users.length}</small>
+          <div><button disabled={loading || page <= 1} onclick={() => void changeUserPage(page - 1)}>Previous</button><span>Page {page}</span><button disabled={loading || !hasNext} onclick={() => void changeUserPage(page + 1)}>Next</button></div>
+        </div>
+      {/if}
+    </div>
+  </section>
 {/if}
 
 {#if showCreate}
@@ -954,3 +1099,48 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /* Directory links that open an account page in a new tab, styled like the row buttons. */
+  .row-actions .row-link { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--text-soft); font-size: 12.5px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .row-actions .row-link:hover { background: var(--surface-2); }
+  .row-actions .row-link.primary { color: #fff; background: var(--mint-dark); border-color: var(--mint-dark); box-shadow: 0 1px 2px rgba(55, 48, 163, .14); }
+  .row-actions .row-link.primary:hover { background: var(--mint); border-color: var(--mint); }
+  a.identity-name { text-decoration: none; }
+  /* Account page: full-width replacement for the old control popup. */
+  .user-page-header { align-items: center; margin-bottom: 18px; }
+  .user-page-title { min-width: 0; }
+  .back-link { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px; padding: 0; border: 0; background: none; color: var(--mint-dark); font-size: 12.5px; font-weight: 650; }
+  .back-link:hover { text-decoration: underline; }
+  .user-identity { gap: 14px; }
+  .user-identity > span { width: 46px; height: 46px; border-radius: 12px; font-size: 16px; }
+  .user-identity h1 { margin: 0; font-size: clamp(22px, 2.6vw, 28px); line-height: 1.15; }
+  .user-subline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 5px 0 0; color: var(--muted); font-size: 12.5px; }
+  .user-subline .copy-link { max-width: 100%; overflow: hidden; color: var(--muted); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .user-subline .copy-link:hover, .user-subline .copy-link.copied { color: var(--mint-dark); }
+  .user-subline .faint { color: var(--line-strong); }
+  .user-subline .status-pill { margin: 0; }
+  .user-layout { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .user-rail { position: sticky; top: 20px; display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm); }
+  .user-rail-label { padding: 10px 10px 4px; color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .user-rail-label:first-child { padding-top: 4px; }
+  .user-rail button { display: block; width: 100%; min-height: 0; padding: 9px 11px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text-soft); text-align: left; }
+  .user-rail button:hover { background: var(--surface-2); color: var(--text); }
+  .user-rail button.active { background: var(--accent-soft); border-color: var(--accent-soft-line); color: var(--mint-dark); }
+  .user-rail button span { display: block; font-size: 13px; font-weight: 650; }
+  .user-rail button small { display: block; margin-top: 1px; color: var(--muted); font-size: 11px; }
+  .user-rail button.active small { color: var(--mint-dark); opacity: .75; }
+  .user-content { min-width: 0; display: grid; gap: 14px; align-content: start; }
+  .user-content :global(.control-panel) { margin: 0; box-shadow: var(--shadow-sm); }
+  .user-content :global(.notice) { margin: 0; }
+  .user-content .detail-list dd code { color: var(--muted); font-size: 12px; }
+  .user-content .session-tabs { margin: 0; }
+  .user-content .panel.empty-state { padding: 48px 20px; }
+  @media (max-width: 980px) {
+    .user-layout { grid-template-columns: 1fr; }
+    .user-rail { position: static; display: flex; gap: 4px; overflow-x: auto; }
+    .user-rail-label { display: none; }
+    .user-rail button { flex: 0 0 auto; width: auto; }
+    .user-rail button small { display: none; }
+  }
+</style>

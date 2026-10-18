@@ -4,6 +4,8 @@ internal sealed class IdentityVerificationMfaPolicy(IMfaService mfa) : IIdentity
 {
     public async ValueTask<IFeedback<IReadOnlyCollection<string>>> VerifyAsync(VerificationMfaRequest request, CancellationToken cancellationToken)
     {
+        if (!request.RequireMfa)
+            return new Feedback<IReadOnlyCollection<string>>(true, "Second factor is optional for this authentication.", []);
         var methods = (await mfa.ListMethodsAsync(request.UserId, cancellationToken).ConfigureAwait(false))
             .Where(method => method.Status == IdentityRecordStatus.Active && method.Kind is MfaKind.Totp or MfaKind.RecoveryCode).ToArray();
         if (methods.Length == 0) return new Feedback<IReadOnlyCollection<string>>(true, "No enrolled second factor.", []);

@@ -440,3 +440,4 @@ HaleyIdentityHost/SamlCerts/
 artifacts/
 TestResults/
 *.user
+/HaleyIdentityHost/appsettings.local.json
