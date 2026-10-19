@@ -3,7 +3,8 @@ using Microsoft.Extensions.Options;
 
 namespace Haley.Services;
 
-public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> options, IdentityApplicationRegistry? registry = null) : IEndpointFilter
+public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> options, IdentityApplicationRegistry? registry = null,
+    FixedWindowRequestRateLimiter? rateLimits = null) : IEndpointFilter
 {
     private readonly IdentityApplicationRegistry _applications = registry ?? new(options.Value.SessionBindingKeys,
         initialApplications: options.Value.Applications);
@@ -16,13 +17,20 @@ public sealed class IdentityBoundaryFilter(IOptions<IdentityServerOptions> optio
             return Results.Problem("Standalone Identity endpoints require explicit TrustedNetwork configuration.", statusCode: 503,
                 extensions: new Dictionary<string, object?> { ["code"] = "identity_boundary_unconfigured" });
         if (!Guid.TryParse(context.HttpContext.Request.Headers["X-Haley-Application-Id"], out var applicationId) || applicationId == Guid.Empty)
-            return Results.Problem("A valid application identifier is required.", statusCode: 400,
-                extensions: new Dictionary<string, object?> { ["code"] = "application_required" });
+            return Reject(context.HttpContext, Results.Problem("A valid application identifier is required.", statusCode: 400,
+                extensions: new Dictionary<string, object?> { ["code"] = "application_required" }));
         var keyId = context.HttpContext.Request.Headers["X-Haley-Session-Key-Id"].ToString();
         var provided = context.HttpContext.Request.Headers["X-Haley-Session-Key"].ToString();
         if (!_applications.Authenticate(applicationId, keyId, provided))
-            return Results.Problem("The application credential was rejected.", statusCode: 401,
-                extensions: new Dictionary<string, object?> { ["code"] = "invalid_session_binding" });
+            return Reject(context.HttpContext, Results.Problem("The application credential was rejected.", statusCode: 401,
+                extensions: new Dictionary<string, object?> { ["code"] = "invalid_session_binding" }));
         return await next(context).ConfigureAwait(false);
+    }
+
+    private IResult Reject(HttpContext context, IResult failure)
+    {
+        if (rateLimits is null) return failure;
+        using var lease = rateLimits.AttemptAcquire(context, IdentityRateLimitFilter.Policy);
+        return lease.IsAcquired ? failure : FixedWindowRequestRateLimiter.Rejection(context, lease);
     }
 }

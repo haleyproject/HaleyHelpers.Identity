@@ -5,6 +5,25 @@ using Xunit;
 namespace Haley.Identity.Tests;
 public sealed class StatusWireContractTests
 {
+    [Theory]
+    [InlineData(IdentityRecordStatus.Active, 2)]
+    [InlineData(IdentityRecordStatus.Revoked, 64)]
+    [InlineData(IdentityRecordStatus.Expired, 128)]
+    public void AccountSessionsKeepNumericStatusesUnderTheHostsStringEnumConfiguration(IdentityRecordStatus status, int expected)
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        var now = DateTimeOffset.UtcNow;
+        var session = new AccountSessionInfo(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), status,
+            now, now, now.AddMinutes(30), null);
+        var page = new AccountSessionPage([session], 1, 10, false);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(page, options));
+        var value = json.RootElement.GetProperty("sessions")[0].GetProperty("status");
+        Assert.Equal(JsonValueKind.Number, value.ValueKind);
+        Assert.Equal(expected, value.GetInt32());
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<AccountSessionInfo>("{\"status\":\"Active\"}", options));
+    }
+
     [Fact]
     public void VerificationContractsKeepNumericValuesUnderTheHostsStringEnumConfiguration()
     {

@@ -104,8 +104,10 @@ public static class IdentityHosting
         app.MapIdentityWorkflowManagement();
         app.MapIdentityApplicationManagement();
         app.MapIdentityVerificationManagement();
-        app.MapIdentityVerificationBrowserEndpoints();
-        app.MapIdentityFederationBrowserEndpoints();
+        app.MapIdentityVerificationBrowserEndpoints(configureRateLimit: endpoint =>
+            endpoint.WithConfiguredFixedWindowRateLimit(IdentityRateLimitFilter.Policy, IdentityProofRateLimitSubject.ResolveAsync));
+        app.MapIdentityFederationBrowserEndpoints(configureRateLimit: endpoint =>
+            endpoint.WithConfiguredFixedWindowRateLimit(IdentityRateLimitFilter.Policy, IdentityProofRateLimitSubject.ResolveAsync));
         app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
         app.MapHaleyIdentityEndpoints();
     }

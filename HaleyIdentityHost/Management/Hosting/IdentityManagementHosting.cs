@@ -21,7 +21,12 @@ public static class IdentityManagementHosting
             .Validate(value => value.SessionMinutes is >= 5 and <= 1440 && !string.IsNullOrWhiteSpace(value.KeyDirectory), "Management session configuration is invalid.").ValidateOnStart();
         builder.Services.AddSingleton<ManagementSessionService>();
         builder.Services.AddAdminLoginLockout(builder.Configuration, IdentityManagementOptions.SectionName);
-        builder.Services.AddAdminLoginRateLimit(Policy, 10);
+        builder.Services.AddConfiguredFixedWindowRateLimit(Policy,
+            builder.Configuration.GetSection($"{IdentityManagementOptions.SectionName}:RateLimit"), defaults =>
+            {
+                defaults.PermitLimit = IdentityManagementOptions.DefaultLoginRateLimit;
+                defaults.Scope = RequestRateLimitOptions.IpScope;
+            });
         builder.Services.AddAdminAntiforgery("Haley.Identity.Admin.Antiforgery", "X-CSRF-TOKEN");
         var keys = builder.Configuration[$"{IdentityManagementOptions.SectionName}:KeyDirectory"] ?? "State/AdminKeys";
         builder.Services.AddDataProtection().SetApplicationName("Haley.Identity.Admin")

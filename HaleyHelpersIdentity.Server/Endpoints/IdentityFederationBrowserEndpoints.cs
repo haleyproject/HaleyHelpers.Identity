@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using Haley.Utils;
+using Haley.Services;
 
 namespace Haley.Extensions;
 
@@ -9,11 +11,15 @@ public static class IdentityFederationBrowserEndpoints
 {
     /// <summary>Anonymous provider callbacks accept only signed, attempt-bound proofs. Session issuance remains a backend operation.</summary>
     public static void MapIdentityFederationBrowserEndpoints(this IEndpointRouteBuilder endpoints,
-        string prefix = "/identity/federation", string codeField = "identity_code")
+        string prefix = "/identity/federation", string codeField = "identity_code") =>
+        MapIdentityFederationBrowserEndpoints(endpoints, null, prefix, codeField);
+
+    public static void MapIdentityFederationBrowserEndpoints(this IEndpointRouteBuilder endpoints,
+        Action<RouteHandlerBuilder>? configureRateLimit, string prefix = "/identity/federation", string codeField = "identity_code")
     {
-        var group = endpoints.MapGroup(prefix).AllowAnonymous().RequireRateLimiting("Haley.Identity")
+        var group = endpoints.MapGroup(prefix).AllowAnonymous()
             .WithMetadata(new RequestSizeLimitAttribute(512000));
-        group.MapPost("/saml/acs", async (HttpContext context, IFederationAuthenticationService federation, CancellationToken ct) =>
+        var saml = group.MapPost("/saml/acs", async (HttpContext context, IFederationAuthenticationService federation, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!context.Request.HasFormContentType) return Results.Problem(statusCode: 400, detail: "A SAML form response is required.");
@@ -21,7 +27,7 @@ public static class IdentityFederationBrowserEndpoints
             var result = await federation.CompleteAsync(new(form["SAMLResponse"].ToString(), form["RelayState"].ToString()), ct).ConfigureAwait(false);
             return Handoff(context, result, codeField);
         });
-        group.MapPost("/external/callback", async (HttpContext context, IFederationAuthenticationService federation, CancellationToken ct) =>
+        var external = group.MapPost("/external/callback", async (HttpContext context, IFederationAuthenticationService federation, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!context.Request.HasFormContentType) return Results.Problem(statusCode: 400, detail: "A signed authentication form response is required.");
@@ -29,6 +35,16 @@ public static class IdentityFederationBrowserEndpoints
             var result = await federation.CompleteExternalAsync(new(form["attempt"].ToString(), form["assertion"].ToString()), ct).ConfigureAwait(false);
             return Handoff(context, result, codeField);
         });
+        if (configureRateLimit is null)
+        {
+            saml.RequireRateLimiting("Haley.Identity");
+            external.RequireRateLimiting("Haley.Identity");
+        }
+        else
+        {
+            configureRateLimit(saml);
+            configureRateLimit(external);
+        }
     }
 
     private static IResult Handoff(HttpContext context, IFeedback<FederationHandoff> result, string codeField)

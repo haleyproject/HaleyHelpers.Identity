@@ -88,3 +88,54 @@ If the calling backend has an outbound HTTP proxy, include your Identity hostnam
 ## Kida
 
 Kida still uses its own Service and Admin containers. Do not start the standalone Haley host against a Kida-owned database. Kida embeds the shared engine, installs shared SQL first and its extension second, and enforces its OAuth client/resource rules. This prototype release assumes the owner recreates databases. No live database is reset by the tooling or by these instructions.
+
+## Configurable request rate limits
+
+The standalone API reads `Haley:Identity:Server:RateLimit`. Its C# defaults are
+`Enabled: true`, `PermitLimit: 120`, `WindowSeconds: 60`, and `Scope: "ip-user"`.
+The admin login reads `Haley:Identity:Management:RateLimit`, with a default limit
+of 10 requests, a 60-second window, and `Scope: "ip"` because it has one configured
+administrator identity. All defaults live in C#; either configuration section can
+be omitted, and a partial section overrides only the supplied fields.
+
+- `ip`: every request in the policy shares the allowance for the observed remote IP.
+- `ip-user`: each identified account at that IP has an independent allowance. One
+  hundred accounts at one IP do not spend each other's permits. The same account
+  at another IP has another allowance.
+- `Enabled`: enables or disables that policy.
+- `PermitLimit`: requests allowed in one window (1 through 1,000,000).
+- `WindowSeconds`: window length in seconds (1 through 86,400), normally 60.
+
+A successful account lookup, account/profile read, MFA read, session check, and
+sign-in each consume one permit when they reach a limited API operation. The limit
+counts requests, not page visits or only incorrect passwords. A page can make several
+requests. The API has one shared allowance per account/IP across its routes;
+management reads are separate and do not consume the management-login allowance.
+
+The application credential is checked before account-based partitioning. Account
+IDs come from route/body values, email/login inputs are resolved to a canonical
+account when present, and opaque sessions are resolved to their account. Account
+lookup/session-resolution results are reused by their endpoints. Session validation
+still returns only its existing session ID and expiry, without account claims.
+Pending verification challenges and federation attempts have their own proof/attempt
+allowances until an account can be identified. Operations with no usable subject,
+including collection-wide operations, fall back to a shared IP allowance. A rate-limit subject
+never grants authorization or changes account lockout/verification-attempt rules.
+
+Invalid scope names, nonpositive limits/windows, or excessive values fail startup
+validation. Where the configuration provider supports file reload, changes apply to subsequent
+requests. Different limit/window/scope combinations use separate allowances; reloading
+unchanged values preserves the existing allowance. Restart the container after editing
+mounted configuration to ensure it reloads; environment overrides also require restart. Counters live in the current process, reset on restart, and are not shared
+between replicas. HTTP 429 includes `Retry-After`, ProblemDetails code
+`rate_limit_exceeded`, and `retryAfterSeconds`. Clients should honor that delay and
+retain their sessions.
+
+The IP is the address observed by the service after trusted forwarded-header
+processing. Configure `Haley:Identity:TrustedProxies` for the actual proxy source
+address; arbitrary forwarded headers are not trusted automatically. Existing deployed
+Config volumes must be edited explicitly; rebuilding an image does not overwrite them.
+
+For direct CLI source builds/publishes, use `-p:HaleyIdentityUseSourceReferences=true`.
+The updated Haley.Helpers.Web package must be released separately before package-mode
+consumers can use the new API.

@@ -67,7 +67,8 @@ public sealed class HostedVerificationTests
         builder.Services.AddSingleton(service);
         builder.Services.AddSingleton(System.Reflection.DispatchProxy.Create<IIdentity, RecipientIdentityProxy>());
         builder.Services.AddAdminLoginRateLimit("verification", 30);
-        builder.Services.AddAdminLoginRateLimit("Haley.Identity", 30);
+        builder.Services.AddConfiguredFixedWindowRateLimit("Haley.Identity",
+            builder.Configuration.GetSection("TestRateLimit"), defaults => defaults.PermitLimit = 30);
         await using var app = builder.Build(); app.UseRateLimiter();
         app.MapIdentityVerificationBrowserEndpoints(rateLimitPolicy: "verification");
         app.MapHaleyIdentityEndpoints(configure: endpointOptions => endpointOptions.Standalone = false);

@@ -13,12 +13,12 @@ public static class IdentityEndpoints
     {
         var options = new IdentityEndpointOptions();
         configure?.Invoke(options);
-        var group = endpoints.MapGroup(prefix).WithTags("Identity").AddEndpointFilter<IdentityBoundaryFilter>();
-        if (options.Standalone) group.RequireRateLimiting("Haley.Identity");
+        var group = endpoints.MapGroup(prefix).WithTags("Identity").AddEndpointFilter<IdentityBoundaryFilter>()
+            .AddEndpointFilter<IdentityRateLimitFilter>();
         Configure(group.MapGet("/accounts/{userId:guid}", async (Guid userId, IIdentity identity, CancellationToken ct) =>
             (await identity.GetAccountAsync(userId, ct).ConfigureAwait(false)).ToMinimalApiResult()), "GetAccount", options);
-        Configure(group.MapPost("/accounts/resolve", async (AccountEmailRequest body, IIdentity identity, CancellationToken ct) =>
-            (await identity.FindAccountAsync(body.Email, ct).ConfigureAwait(false)).ToMinimalApiResult()), "FindAccount", options);
+        Configure(group.MapPost("/accounts/resolve", async (AccountEmailRequest body, HttpContext context, IIdentity identity, CancellationToken ct) =>
+            (await IdentityRateLimitFilter.FindAccountAsync(context, identity, body.Email, ct).ConfigureAwait(false)).ToMinimalApiResult()), "FindAccount", options);
         Configure(group.MapPost("/accounts", async (EnsureAccountRequest request, IIdentity identity, CancellationToken ct) =>
             (await identity.EnsureAccountAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "EnsureAccount", options);
         Configure(group.MapPost("/accounts/search", async (UserPageRequest request, IIdentity identity, CancellationToken ct) =>
@@ -43,10 +43,10 @@ public static class IdentityEndpoints
         }), "AuthenticateTotp", options);
         Configure(group.MapPost("/sessions/application", async (ApplicationSessionRequest request, IIdentity identity, CancellationToken ct) =>
             (await identity.CreateApplicationSessionAsync(request, ct).ConfigureAwait(false)).ToMinimalApiResult()), "CreateApplicationSession", options);
-        Configure(group.MapPost("/sessions/validation", async (SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>
-            (await identity.ValidateSessionAsync(body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ValidateSession", options);
-        Configure(group.MapPost("/sessions/resolution", async (SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>
-            (await identity.ResolveSessionAsync(body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ResolveSession", options);
+        Configure(group.MapPost("/sessions/validation", async (SessionTokenRequest body, HttpContext context, IIdentity identity, CancellationToken ct) =>
+            (await IdentityRateLimitFilter.ValidateSessionAsync(context, identity, body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ValidateSession", options);
+        Configure(group.MapPost("/sessions/resolution", async (SessionTokenRequest body, HttpContext context, IIdentity identity, CancellationToken ct) =>
+            (await IdentityRateLimitFilter.ResolveSessionAsync(context, identity, body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "ResolveSession", options);
         Configure(group.MapDelete("/sessions", async ([FromBody] SessionTokenRequest body, IIdentity identity, CancellationToken ct) =>
             (await identity.RevokeSessionAsync(body.Token, ct).ConfigureAwait(false)).ToMinimalApiResult()), "RevokeSession", options);
         Configure(group.MapPost("/login-attempts/search", async (UserLoginAttemptSearchRequest request, IIdentity identity, CancellationToken ct) =>

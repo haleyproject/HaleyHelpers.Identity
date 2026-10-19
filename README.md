@@ -108,3 +108,17 @@ Run `dotnet test HaleyHelpersIdentity.Tests/HaleyHelpersIdentity.Tests.csproj -p
 ## Prune unused MFA methods
 
 In Accounts, open a user's MFA posture and choose **Prune unused**. After confirmation, the console permanently removes all retired methods for that account that were never confirmed or used, together with their secret data and enrollment tickets. Methods referenced by another enrollment are retained. The screen refreshes and reports the actual number removed. Active and pending enrollments remain available. This control is shared by Haley Identity Admin and Kida Admin and requires the normal management session and CSRF token. No automatic pruning or schema migration runs at startup.
+
+## Configurable request rate limits
+
+`Haley:Identity:Server:RateLimit` defaults to 120 requests per 60 seconds with
+`Scope: "ip-user"`. Account reads and session checks count too. Each account at one
+IP receives its own allowance. `Haley:Identity:Management:RateLimit` controls admin
+login separately (10 requests per 60 seconds, `Scope: "ip"`). All defaults are in C#;
+missing sections/fields keep them. Both policies support `Enabled`, `PermitLimit`,
+`WindowSeconds`, and `Scope` (`ip` or `ip-user`).
+
+See [the deployment guide](initialization.md#configurable-request-rate-limits) for
+subject resolution, anonymous fallback, configuration reload, HTTP 429 behavior, and
+persistent Config-volume updates. The new shared limiter API is in Haley.Helpers.Web;
+package publication/version changes are separate from this source change.

@@ -1,6 +1,4 @@
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.RateLimiting;
-using System.Threading.RateLimiting;
 using Haley.Security;
 using Haley.Services;
 using Microsoft.Extensions.Configuration;
@@ -8,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Haley.Utils;
 
 namespace Haley.Extensions;
 
@@ -44,13 +43,8 @@ public static class IdentityServerRegistration
             .Validate(value => value.TotpLogin.ApplicationIds.All(id => id != Guid.Empty),
                 "Authenticator-login application IDs must be nonempty GUIDs.").ValidateOnStart();
         services.AddOptions<IdentityOptions>();
-        services.AddRateLimiter(limits =>
-        {
-            limits.RejectionStatusCode = 429;
-            limits.AddPolicy("Haley.Identity", context => RateLimitPartition.GetFixedWindowLimiter(
-                context.Connection.RemoteIpAddress?.ToString() ?? "embedded", _ => new FixedWindowRateLimiterOptions
-                { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-        });
+        services.AddConfiguredFixedWindowRateLimit(IdentityRateLimitFilter.Policy,
+            configuration.GetSection($"{IdentityServerOptions.SectionName}:RateLimit"));
         services.TryAddSingleton<IIdentityClock, SystemClock>();
         services.TryAddSingleton<IIdentityUuidGenerator, Uuid7Generator>();
         services.TryAddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();

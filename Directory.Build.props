@@ -5,6 +5,8 @@
     <IdentityHostUserSecretsId>ebf660ef-2952-46b8-9733-36d02045d53e</IdentityHostUserSecretsId>
     <HaleyProject Condition="'$(HaleyProject)' == ''">$(MSBuildThisFileDirectory)..</HaleyProject>
     <HaleyIdentityUseSourceReferences Condition="'$(HaleyIdentityUseSourceReferences)' == '' and ('$(KidaUseHaleyPackageReferences)' == 'false' or '$(SolutionName)' == 'Haley_AllReferences' or $([System.String]::Copy('$(SolutionName)').EndsWith('_Ref')))">true</HaleyIdentityUseSourceReferences>
+    <!-- Match Kida normal solutions' existing preference for an available Haley source checkout. -->
+    <HaleyIdentityUseSourceReferences Condition="'$(HaleyIdentityUseSourceReferences)' == '' and '$(KidaUseHaleyPackageReferences)' != 'true' and $([System.String]::Copy('$(SolutionName)').StartsWith('Kida.')) and Exists('$(HaleyProject)/HaleyHelpers.Web/HaleyHelpersWeb/HaleyHelpersWeb.csproj')">true</HaleyIdentityUseSourceReferences>
     <HaleyIdentityUseSourceReferences Condition="'$(HaleyIdentityUseSourceReferences)' == ''">false</HaleyIdentityUseSourceReferences>
   </PropertyGroup>
   <Import Project="$(HaleyProject)\HaleyProject\Haley.Version.Props" Condition="Exists('$(HaleyProject)\HaleyProject\Haley.Version.Props')" />

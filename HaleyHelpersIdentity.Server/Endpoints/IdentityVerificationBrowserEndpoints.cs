@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Mvc;
 using Haley.Services;
+using Haley.Utils;
 
 namespace Haley.Extensions;
 
@@ -10,16 +11,22 @@ namespace Haley.Extensions;
 public static class IdentityVerificationBrowserEndpoints
 {
     public static void MapIdentityVerificationBrowserEndpoints(this IEndpointRouteBuilder endpoints,
-        string prefix = "/identity/verify", string rateLimitPolicy = "Haley.Identity")
+        string prefix = "/identity/verify", string rateLimitPolicy = "Haley.Identity") =>
+        MapIdentityVerificationBrowserEndpoints(endpoints, null, prefix, rateLimitPolicy);
+
+    public static void MapIdentityVerificationBrowserEndpoints(this IEndpointRouteBuilder endpoints,
+        Action<RouteHandlerBuilder>? configureRateLimit, string prefix = "/identity/verify", string rateLimitPolicy = "Haley.Identity")
     {
         var group = Pages(endpoints, prefix);
-        group.MapPost("/{applicationId:guid}/{resource}/completion", async (Guid applicationId, string resource,
+        var completion = group.MapPost("/{applicationId:guid}/{resource}/completion", async (Guid applicationId, string resource,
             CompleteIdentityVerificationRequest request, HttpContext context, IdentityVerificationService verification, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.Pragma = "no-cache";
             return (await verification.CompleteForApplicationAsync(applicationId, resource, request, ct).ConfigureAwait(false)).ToMinimalApiResult();
-        }).RequireRateLimiting(rateLimitPolicy);
+        });
+        if (configureRateLimit is null) completion.RequireRateLimiting(rateLimitPolicy);
+        else configureRateLimit(completion);
     }
 
     internal static void MapIdentityRecipientCompletion(this IEndpointRouteBuilder endpoints, string apiPrefix) =>
@@ -29,7 +36,8 @@ public static class IdentityVerificationBrowserEndpoints
             {
                 context.Response.Headers.CacheControl = "no-store";
                 return (await verification.CompleteForApplicationAsync(applicationId, resource, request, ct).ConfigureAwait(false)).ToMinimalApiResult();
-            }).AllowAnonymous().WithTags("Identity Verification").RequireRateLimiting("Haley.Identity");
+            }).AllowAnonymous().WithTags("Identity Verification")
+                .WithConfiguredFixedWindowRateLimit(IdentityRateLimitFilter.Policy, IdentityProofRateLimitSubject.ResolveAsync);
 
     /// <summary>Hosts the same page in an application BFF using its registered embedded or remote IIdentity client.</summary>
     public static void MapIdentityVerificationProxyEndpoints(this IEndpointRouteBuilder endpoints, Guid applicationId,

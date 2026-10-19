@@ -63,21 +63,24 @@ export enum CertificateStatus { NotYetValid = 1, Valid = 2, Expired = 4, Invalid
 export enum AppHealthStatus { Unknown = 1, Healthy = 2, Degraded = 4, Unhealthy = 8, Offline = 16 }
 
 const words = (name: string) => name.replace(/([a-z])([A-Z])/g, '$1 $2');
+// Numeric enums also have name-to-number entries. Reject nonnumeric wire values
+// before lookup so a string such as "Active" cannot become a numeric label.
+const enumName = (names: Record<number, string>, value: number) => typeof value === 'number' ? names[value] : undefined;
 export function statusLabel(value: number | ''): string {
-  return value === '' ? 'All statuses' : words(RecordStatus[value] ?? `Unknown (${value})`);
+  return value === '' ? 'All statuses' : words(enumName(RecordStatus, value) ?? `Unknown (${value})`);
 }
 export function statusClass(value: number): string {
-  return (RecordStatus[value] ?? 'unknown').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  return (enumName(RecordStatus, value) ?? 'unknown').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
 }
 export function operationalStatusLabel(value: number | ''): string {
-  return value === '' ? 'All statuses' : words(OperationalStatus[value] ?? `Unknown (${value})`);
+  return value === '' ? 'All statuses' : words(enumName(OperationalStatus, value) ?? `Unknown (${value})`);
 }
 export function operationalStatusClass(value: number): string {
-  return (OperationalStatus[value] ?? 'unknown').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  return (enumName(OperationalStatus, value) ?? 'unknown').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
 }
 export function certificateStatusLabel(value: number): string {
-  return words(CertificateStatus[value] ?? `Unknown (${value})`);
+  return words(enumName(CertificateStatus, value) ?? `Unknown (${value})`);
 }
 export function certificateStatusClass(value: number): string {
-  return (CertificateStatus[value] ?? 'invalid').replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+  return (enumName(CertificateStatus, value) ?? 'invalid').replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 }
