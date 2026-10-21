@@ -31,7 +31,9 @@ public static class IdentityServerRegistration
             return services;
         }
         services.AddSingleton(new RegistrationMarker());
-        var options = services.AddOptions<IdentityServerOptions>().Bind(configuration.GetSection(IdentityServerOptions.SectionName));
+        var options = services.AddOptions<IdentityServerOptions>().Configure(value => BindServerOptions(configuration, value));
+        services.AddSingleton<IOptionsChangeTokenSource<IdentityServerOptions>>(
+            new ConfigurationChangeTokenSource<IdentityServerOptions>(configuration.GetSection(IdentityServerOptions.SectionName)));
         if (configure is not null) options.Configure(configure);
         options.Validate(value => !string.IsNullOrWhiteSpace(value.MfaProtectionPurpose) && value.MfaProtectionPurpose.Length <= 200 &&
             value.PreviousMfaProtectionPurposes is { Length: <= 8 } &&
@@ -48,9 +50,6 @@ public static class IdentityServerRegistration
                 value.Verification.LinkProofSeconds >= 60 && value.Verification.LinkProofSeconds <= value.Verification.MaximumTokenValiditySeconds &&
                 value.Verification.PasswordResetSeconds >= 60 && value.Verification.PasswordResetSeconds <= value.Verification.MaximumTokenValiditySeconds,
                 "Identity verification lifetimes exceed the configured bounds.")
-            .Validate(value => value.SessionBindingKeys.All(app => Guid.TryParseExact(app.Key, "D", out var id) && id != Guid.Empty &&
-                app.Value.All(key => !string.IsNullOrWhiteSpace(key.Key) && key.Value.Length is >= 32 and <= 512)),
-                "Session binding keys require canonical application GUIDs, key identifiers and secrets of 32 to 512 characters.")
             .Validate(value => value.TotpLogin.ApplicationIds.All(id => id != Guid.Empty),
                 "Authenticator-login application IDs must be nonempty GUIDs.").ValidateOnStart();
         services.AddOptions<IdentityOptions>();
@@ -98,6 +97,22 @@ public static class IdentityServerRegistration
         if (registerInitializer) services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, IdentityDatabaseHostedService>());
         return services;
     }
+    private static void BindServerOptions(IConfiguration configuration, IdentityServerOptions options)
+    {
+        // Application entries are validated independently by the registry. Binding them as part
+        // of the host options would let one malformed status or key stop the entire service.
+        using var server = new ConfigurationManager();
+        server.AddInMemoryCollection(configuration
+            .GetSection(IdentityServerOptions.SectionName).AsEnumerable(makePathsRelative: true)
+            .Where(pair => !string.IsNullOrEmpty(pair.Key) &&
+                !pair.Key.Equals("Applications", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.StartsWith("Applications:", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.Equals("SessionBindingKeys", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.StartsWith("SessionBindingKeys:", StringComparison.OrdinalIgnoreCase)));
+        server.Bind(options);
+        IdentityApplicationRegistry.FromConfiguration(configuration).ConfigureOptions(options);
+    }
+
     private sealed class RegistrationMarker { }
 
 }

@@ -67,7 +67,7 @@ public sealed class ApplicationRegistryTests : IDisposable
     }
 
     [Fact]
-    public async Task InvalidOrMissingConfigurationRetainsLastValidRegistryAndCannotBeOverwrittenByAnEdit()
+    public async Task UnreadableConfigurationKeepsItsSnapshotWhileInvalidApplicationsAreDisabled()
     {
         var reader = Open();
         var writer = Open();
@@ -82,11 +82,12 @@ public sealed class ApplicationRegistryTests : IDisposable
         var malformed = JsonNode.Parse(valid)!;
         malformed["Haley"]!["Identity"]!["Server"]!["Applications"]![credential.ApplicationId.ToString("D")]!["Status"] = "Active";
         await File.WriteAllTextAsync(SettingsPath, malformed.ToJsonString());
-        await Assert.ThrowsAsync<InvalidDataException>(() => reader.ReloadAsync());
-        Assert.True(Accepts(reader, credential));
+        await reader.ReloadAsync();
+        Assert.False(Accepts(reader, credential));
+        Assert.Single(reader.ConfigurationIssues());
         File.Delete(SettingsPath);
         await Assert.ThrowsAsync<IOException>(() => reader.ReloadAsync());
-        Assert.True(Accepts(reader, credential));
+        Assert.False(Accepts(reader, credential));
         await File.WriteAllTextAsync(SettingsPath, valid);
         await writer.RevokeAsync(credential.ApplicationId);
         await reader.ReloadAsync();
@@ -191,6 +192,39 @@ public sealed class ApplicationRegistryTests : IDisposable
         Assert.Equal(IdentityRecordStatus.Revoked, restarted.List().Single(app => app.ApplicationId == first).Status);
         var persisted = JsonNode.Parse(await File.ReadAllTextAsync(SettingsPath))!;
         Assert.Null(persisted["Haley"]!["Identity"]!["Server"]!["SessionBindingKeys"]![second.ToString("D")]);
+    }
+
+    [Fact]
+    public async Task MissingActiveApplicationKeysIdentifyTheConfigurationPathAndAcceptExternalCredentials()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        await WriteMetadataAsync(first, second);
+        var originalSettings = await File.ReadAllBytesAsync(SettingsPath);
+        var external = ExternalKeys(first, second);
+        var keyPath = $"{IdentityServerOptions.SectionName}:SessionBindingKeys:{second:D}";
+        var secretPath = $"{keyPath}:external";
+        var existingSecret = external[secretPath]!;
+        external.Remove(secretPath);
+
+        var disabled = FromConfiguration(external);
+        var issue = Assert.Single(disabled.ConfigurationIssues());
+        Assert.Equal(second, issue.ApplicationId);
+        Assert.Contains(keyPath, issue.Message);
+        Assert.Contains("Active", issue.Message);
+        Assert.DoesNotContain(existingSecret, issue.Message);
+        Assert.DoesNotContain(external[$"{IdentityServerOptions.SectionName}:SessionBindingKeys:{first:D}:external"]!, issue.Message);
+        Assert.Equal(IdentityRecordStatus.Inactive, disabled.List().Single(app => app.ApplicationId == second).Status);
+        Assert.False(disabled.Authenticate(second, "external", existingSecret));
+        Assert.True(disabled.Authenticate(first, "external", external[$"{IdentityServerOptions.SectionName}:SessionBindingKeys:{first:D}:external"]!));
+        Assert.Equal(originalSettings, await File.ReadAllBytesAsync(SettingsPath));
+
+        external[secretPath] = existingSecret;
+        var registry = FromConfiguration(external);
+        Assert.Equal(2, registry.List().Count);
+        Assert.True(registry.Authenticate(second, "external", existingSecret));
+        Assert.All(registry.List(), app => Assert.Equal(IdentityRecordStatus.Active, app.Status));
+        Assert.Equal(originalSettings, await File.ReadAllBytesAsync(SettingsPath));
     }
 
     [Fact]

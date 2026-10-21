@@ -5,9 +5,10 @@
   import { requestConfirmation } from '../shared/lib/confirmation';
   import { showError, showSuccess } from '../shared/lib/snackbar';
   import { RecordStatus, statusLabel } from '../shared/lib/statuses';
-  import type { IdentityApplicationCredential, RegisteredIdentityApplication } from '../shared/lib/types';
+  import type { IdentityApplicationCredential, RegisteredIdentityApplication, IdentityApplicationConfigurationIssue } from '../shared/lib/types';
 
   let applications: RegisteredIdentityApplication[] = [];
+  let configurationIssues: IdentityApplicationConfigurationIssue[] = [];
   let displayName = '';
   let applicationId = '';
   let saving = false;
@@ -23,7 +24,11 @@
 
   async function load() {
     loading = true;
-    try { applications = await adminApi.identityApplications(); }
+    try {
+      [applications, configurationIssues] = await Promise.all([
+        adminApi.identityApplications(), adminApi.identityApplicationConfigurationIssues()
+      ]);
+    }
     catch (reason) { failure(reason); }
     finally { loading = false; }
   }
@@ -126,6 +131,13 @@
     </section>
   {/if}
   {#if notice}<p role="status">{notice}</p>{/if}
+  {#if configurationIssues.length}
+    <section class="panel compact configuration-errors" role="alert" aria-label="Application configuration errors">
+      <h2>Application configuration needs attention</h2>
+      <p>Affected applications cannot authenticate. Correct their settings, then refresh this list. Changes in User Secrets or environment variables require a host restart.</p>
+      <ul>{#each configurationIssues as issue}<li>{issue.message}</li>{/each}</ul>
+    </section>
+  {/if}
 
   <section class="panel table-panel">
     <div class="panel-heading"><h2>Registered applications</h2><small>{applications.length} total</small></div>
@@ -137,7 +149,7 @@
             <td><strong>{app.displayName}</strong><code class="application-id"><button type="button" class="copy-link identifier-copy"
               title="Copy application ID" aria-label={`Copy application ID for ${app.displayName}`}
               onclick={() => void copyIdentifier(app.applicationId, 'Application ID')}>{app.applicationId}</button></code></td>
-            <td>{typeof app.status === 'number' ? statusLabel(app.status) : 'Unknown status'}</td>
+            <td>{app.configurationError ? 'Configuration error' : typeof app.status === 'number' ? statusLabel(app.status) : 'Unknown status'}</td>
             <td>
               {#each app.keyIds as keyId}
                 <div class="key-row"><code><button type="button" class="copy-link identifier-copy"
@@ -146,7 +158,8 @@
                   <button class="quiet danger-text" disabled={saving || app.status !== RecordStatus.Active || app.keyIds.length < 2} title={app.keyIds.length < 2 ? 'Rotate first or revoke the application to remove its final key.' : 'Revoke this key'} onclick={() => void revokeKey(app, keyId)}>Revoke key</button></div>
               {:else}<span>No active keys</span>{/each}
             </td>
-            <td>{#if app.status === RecordStatus.Active}<div class="application-actions">
+            <td>{#if app.configurationError}<span>Correct application settings</span>
+            {:else if app.status === RecordStatus.Active}<div class="application-actions">
               <button class="quiet" disabled={saving || issued !== null} onclick={() => void rotate(app)}>Rotate key</button>
               <button class="quiet danger-text" disabled={saving} onclick={() => void revoke(app)}>Revoke application</button>
             </div>{:else if app.status === RecordStatus.Revoked}
@@ -171,4 +184,6 @@
   .identifier-copy { max-width: 100%; text-align: left; overflow-wrap: anywhere; user-select: all; }
   .identifier-copy:focus-visible { outline: 2px solid var(--mint-dark); outline-offset: 3px; border-radius: 3px; }
   .key-row code { overflow-wrap: anywhere; }
+  .configuration-errors { border-inline-start: 4px solid var(--danger, #b42318); }
+  .configuration-errors li { overflow-wrap: anywhere; }
 </style>

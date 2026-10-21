@@ -18,6 +18,7 @@ public static class IdentityApplicationManagementEndpoints
                 return await next(context);
             });
         group.MapGet("/", (IdentityApplicationRegistry registry) => registry.List());
+        group.MapGet("/configuration-issues", (IdentityApplicationRegistry registry) => registry.ConfigurationIssues());
         group.MapPost("/", async (RegisterIdentityApplicationRequest request, IdentityApplicationRegistry registry, CancellationToken ct) =>
             (await registry.RegisterAsync(request, ct)).ToMinimalApiResult());
         group.MapPost("/{applicationId:guid}/keys", async (Guid applicationId, IdentityApplicationRegistry registry, CancellationToken ct) =>

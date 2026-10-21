@@ -1,7 +1,7 @@
 import type { AdminSession, AdminTotpEnrollment, BulkPasswordResetResponse, BulkUserImportResponse, BulkUserImportRowResult, IdentityClientPolicy, IdentityOperationalArea, IdentityOperationalPage, IdentityOperationalRecord, IdentityProvider, IdentityStatus, LoginProtectionPolicy, MfaDomainRule, MfaMethod, OAuthClient, OAuthClientPage, OAuthClientType, SamlCertificate, Section, TotpEnrollmentCompletion, UserActivityFilter, UserIdentity, UserIdentityPage, UserLoginAttempt, UserLoginAttemptPage, UserMfaPolicyOverride, UserProfile, UserSession, UserSessionPage, UserSortOrder } from './types';
 import { RecordStatus } from './statuses';
 import type { IdentityWorkflowContext, IdentityWorkflowOperation, IdentityWorkflowSettings, IdentityWorkflowApplicationPage, BeginWorkflowVerification, VerificationInitiation, VerificationLink } from './types';
-import type { RegisteredIdentityApplication, IdentityApplicationCredential } from './types';
+import type { RegisteredIdentityApplication, IdentityApplicationCredential, IdentityApplicationConfigurationIssue } from './types';
 
 
 export class ApiError extends Error {
@@ -149,6 +149,10 @@ export class IdentityAdminApi {
 
   identityApplications(): Promise<RegisteredIdentityApplication[]> {
     return this.request('applications');
+  }
+
+  identityApplicationConfigurationIssues(): Promise<IdentityApplicationConfigurationIssue[]> {
+    return this.request('applications/configuration-issues');
   }
 
 

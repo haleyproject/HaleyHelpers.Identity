@@ -10,6 +10,13 @@ export interface RegisteredIdentityApplication {
   displayName: string;
   status: number;
   keyIds: string[];
+  configurationError?: string | null;
+}
+
+export interface IdentityApplicationConfigurationIssue {
+  applicationId: string | null;
+  configurationPath: string;
+  message: string;
 }
 
 export interface IdentityApplicationCredential {

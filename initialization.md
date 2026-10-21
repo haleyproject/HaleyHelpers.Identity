@@ -20,6 +20,10 @@ The same credential commands are available through `dotnet Haley.Identity.Host.d
 
 ## Applications
 
+An invalid application entry does not stop the service. Missing or malformed keys, unsupported status flags and invalid metadata disable that application in memory; healthy applications continue authenticating. The Applications page shows the exact configuration error, and the server logs new and cleared errors without credential values. Disabled entries are reported as `Inactive` (`32`) with a `configurationError`; their saved settings and keys are not changed. Correct the settings file and allow the registry reload to recover the application. Changes supplied through development User Secrets or environment variables require a restart. The protected diagnostics endpoint is `GET /admin/api/applications/configuration-issues`.
+
+Host-wide configuration must still be valid. Malformed JSON prevents initial configuration loading. If a running host cannot read or parse a later settings-file edit, it logs the failure and retains the last published registry until the file is repaired.
+
 For manual verification, open **Identity → Verification & onboarding**, choose the application, email, purpose, proof and expiry, then copy the code/link for delivery. Recipients use `/identity/verify/` without an admin login. If the host is private, set `Server:Verification:ApplicationPageUrls:<application-guid>` to the public application's page or enter that URL in the form. [Verification hosting](VERIFICATION.md) explains the shared page and backend proxy mapping; the identity host does not send email.
 
 For password-free authenticator login, set `Haley:Identity:Server:TotpLogin:Enabled=true` and restart. Optionally list application GUIDs under `TotpLogin:ApplicationIds`. Accounts must have verified email and an enrolled authenticator. [Authentication and recovery](AUTHENTICATION.md) explains setup, SDK calls, API routes and recovery codes.

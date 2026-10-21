@@ -46,16 +46,13 @@ public static class IdentityHosting
         builder.Services.AddHaleyIdentity(builder.Configuration, identity => identity.UseEmbedded(builder.Configuration));
         builder.Services.AddSingleton(provider =>
         {
-            var options = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<IdentityServerOptions>>().Value;
-            return new IdentityApplicationRegistry(options.SessionBindingKeys,
+            return IdentityApplicationRegistry.FromConfiguration(builder.Configuration,
                 Path.Combine(builder.Environment.ContentRootPath, "appsettings.json"),
-                provider.GetRequiredService<IIdentityUuidGenerator>(), options.Applications);
+                provider.GetRequiredService<IIdentityUuidGenerator>());
         });
         builder.Services.AddHostedService<ApplicationRegistryReloadService>();
         builder.Services.AddOptions<IdentityServerOptions>()
             .Validate(options => options.TrustedNetwork, "Explicitly enable TrustedNetwork only inside the intended private application boundary.")
-            .Validate(options => options.SessionBindingKeys.All(app => Guid.TryParseExact(app.Key, "D", out var applicationId) && applicationId != Guid.Empty && app.Value.All(key =>
-                !string.IsNullOrWhiteSpace(key.Key) && key.Value.Length is >= 32 and <= 512)), "Application session binding keys must contain 32 to 512 characters.")
             .ValidateOnStart();
         builder.Services.AddHttpContextAccessor();
         builder.AddIdentityManagement();
