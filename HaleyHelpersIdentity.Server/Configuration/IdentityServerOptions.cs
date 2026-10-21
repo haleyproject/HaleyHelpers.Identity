@@ -19,6 +19,8 @@ public sealed class IdentityServerOptions
     }
     public string MfaEnrollmentPath { get; set; } = "/identity/mfa/enroll";
     public string MfaProtectionPurpose { get; set; } = "haley.identity.mfa.totp";
+    /// <summary>Explicit previous encryption contexts accepted when reading existing MFA secrets. New secrets always use MfaProtectionPurpose.</summary>
+    public string[] PreviousMfaProtectionPurposes { get; set; } = [];
     public string EventPrefix { get; set; } = "haley.identity";
     public IdentitySecretOptions SecretProtection { get; set; } = new();
     public IdentityFederationOptions Federation { get; set; } = new();

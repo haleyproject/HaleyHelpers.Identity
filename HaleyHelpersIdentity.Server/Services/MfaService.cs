@@ -74,9 +74,7 @@ public sealed class MfaService(
         byte[] secret;
         try
         {
-            secret = protector.Unprotect(
-                current.Method.SecretEncrypted,
-                Purpose(current.Method.Method.MethodId));
+            secret = UnprotectSecret(current.Method.SecretEncrypted, current.Method.Method.MethodId);
         }
         catch (Exception ex) when (ex is InvalidOperationException or CryptographicException)
         {
@@ -217,7 +215,7 @@ public sealed class MfaService(
     {
         if (code.Length != 6 || !code.All(char.IsAsciiDigit))
             return null;
-        var secret = protector.Unprotect(encrypted, Purpose(methodId));
+        var secret = UnprotectSecret(encrypted, methodId);
         try
         {
             var counter = now.ToUnixTimeSeconds() / 30;
@@ -274,6 +272,24 @@ public sealed class MfaService(
         hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         return true;
     }
+    private byte[] UnprotectSecret(byte[] encrypted, Guid methodId)
+    {
+        try
+        {
+            return protector.Unprotect(encrypted, Purpose(methodId));
+        }
+        catch (CryptographicException)
+        {
+            foreach (var previous in options.Value.PreviousMfaProtectionPurposes)
+            {
+                if (string.Equals(previous, options.Value.MfaProtectionPurpose, StringComparison.Ordinal)) continue;
+                try { return protector.Unprotect(encrypted, $"{previous}:{methodId:N}"); }
+                catch (CryptographicException) { /* Try only the explicitly configured previous contexts. */ }
+            }
+            throw;
+        }
+    }
+
     private string Purpose(Guid methodId) => $"{options.Value.MfaProtectionPurpose}:{methodId:N}";
     private static IFeedback Ok() => new Feedback(true, "MFA operation completed.")
     {

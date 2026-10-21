@@ -1,5 +1,42 @@
 # Haley.Helpers.Identity
 
+## Central identity shared with Kida
+
+Haley owns the account engine and foundation tables. Kida can run that same engine
+against the same database while adding its own OAuth tables and policies. There is
+one account, password, MFA enrollment and lifecycle state; callers can continue
+using their chosen host's authentication boundary.
+
+Use [shared-identity.example.json](shared-identity.example.json) as the common
+configuration fragment. Merge it into each host's settings, supply each host's
+connection credentials, and point the common adapter at one physical database.
+The fragment does not contain credentials or create a key: supply the same key IDs
+and key material to both hosts, retaining old keys needed to decrypt old records.
+Their file paths may differ. Keep Haley application/session-binding credentials
+and Kida OAuth clients/signing keys separate.
+
+Kida treats an existing `Haley:Identity:Server` section as authoritative for common
+identity settings and mirrors its human-authentication policy. Without that section,
+existing Kida configuration remains supported. The shared issuer label is display
+metadata and does not change Kida's JWT issuer or client authentication.
+
+`PreviousMfaProtectionPurposes` accepts up to eight explicit previous encryption
+contexts. Include `kida.identity.mfa.totp` on both hosts when reusing existing Kida
+authenticator secrets. Current and previous protection keys must remain readable.
+New secrets use `MfaProtectionPurpose`; reads of old secrets do not rewrite them.
+
+Existing Kida databases require the owner-applied
+`20261021_shared_identity_lifecycle.sql` migration from the canonical Kida Identity
+SQL directory. Kida-owned foreign keys handle dependent cleanup even when the Kida
+service is stopped. Pure Haley databases require no Kida tables or this migration.
+No table-detection branches or Kida-specific queries are added to Haley.
+
+Password changes revoke shared sessions, including Kida sessions. Kida rejects
+refresh requests for revoked sessions. Applications still need their existing
+session/token validation; sharing a database does not instantly remove an already
+issued access token or grant permissions in another application.
+
+
 Reusable account storage and identity operations for .NET 8 applications. The same `IIdentity` contract supports an embedded engine, a private Haley Identity server, or Kida. Kida uses the shared engine locally; it does not call a second identity service.
 
 ## Projects and dependencies

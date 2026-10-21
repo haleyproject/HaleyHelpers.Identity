@@ -1,4 +1,5 @@
 using Haley.Abstractions;
+using Haley.Constants;
 using Haley.Models;
 using Microsoft.Extensions.DependencyInjection;
 using System.Security.Cryptography;
@@ -200,7 +201,10 @@ public sealed class VerificationPersistenceTests
         var wrong = proof.Verifier == "000000" ? "111111" : "000000";
         for (var i = 0; i < 5; i++) Assert.False((await client.CompleteVerificationAsync(Complete(proof) with { Verifier = wrong })).Status);
         Assert.Equal(IdentityStatus.Locked, (await client.GetAccountAsync(account.Result.UserId)).Result.Status);
-        Assert.Null((await client.BeginVerificationAsync(new("lock-otp@example.test", VerificationPurpose.PasswordlessLogin))).Result.Delivery);
+        var blocked = await client.BeginVerificationAsync(new("lock-otp@example.test", VerificationPurpose.PasswordlessLogin));
+        Assert.False(blocked.Status);
+        Assert.Equal(423, blocked.Code);
+        Assert.Equal(IdentityErrorCodes.AccountLocked, blocked.Key);
         database.Clock.UtcNow = database.Clock.UtcNow.AddMinutes(16);
         var afterLockout = await Begin(client, VerificationPurpose.PasswordlessLogin, "lock-otp@example.test");
         Assert.True((await client.CompleteVerificationAsync(Complete(afterLockout))).Status);

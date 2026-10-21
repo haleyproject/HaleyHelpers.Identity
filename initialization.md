@@ -139,3 +139,57 @@ Config volumes must be edited explicitly; rebuilding an image does not overwrite
 For direct CLI source builds/publishes, use `-p:HaleyIdentityUseSourceReferences=true`.
 The updated Haley.Helpers.Web package must be released separately before package-mode
 consumers can use the new API.
+
+
+## One central identity database with Kida
+
+1. Choose one authoritative identity database. Repointing an adapter does not merge
+   accounts, local numeric relationships, OAuth clients or sessions from another
+   populated database. Back up existing data and plan a separate data migration if
+   both databases already contain records that must be retained.
+2. Merge `shared-identity.example.json` into both hosts' configuration. Keep each
+   host's connection credentials. The `identity` adapter in both processes must
+   resolve to the same server and database. In Kida, a shared
+   `Haley:Identity:Server:Adapter` selects both foundation and extension storage.
+3. Put the common issuer label, password/lockout/MFA policy and protection-key ring
+   under `Haley:Identity:Server`. Once this section exists, omitted shared settings
+   take Haley defaults; Kida's old shared settings are no longer policy overrides.
+   Keep Haley application binding credentials and Kida OAuth clients, signing keys,
+   audiences and grants in their respective host configuration.
+4. Use the same protection key IDs and material on both hosts, including all keys
+   needed by existing encrypted records. File paths may differ. Do not generate a
+   new independent key for each host, and do not reuse an existing ID for different
+   key material. `set-secret-key` on Kida now selects the Haley protection section
+   when this shared section exists, while retaining the existing reuse safeguards.
+5. For existing Kida TOTP secrets, retain the original keys and configure
+   `PreviousMfaProtectionPurposes: ["kida.identity.mfa.totp"]` on both hosts. This
+   explicitly enables old-purpose reads without re-enrollment. New secrets always
+   use `haley.identity.mfa.totp` unless the owner sets another common current
+   purpose. Existing ciphertext is not rewritten automatically.
+6. If the selected database already contains Kida's extension tables, stop writers
+   and have the owner apply the canonical Kida migration
+   `20261021_shared_identity_lifecycle.sql`. Its orphan-reference pre-check must be
+   zero; resolve historical references explicitly if it is not. Test/verify the
+   post-checks before restarting. Fresh Kida initialization creates the final
+   relationships automatically. Pure Haley installations require no Kida tables.
+7. Restart both hosts after changing mounted configuration. A newly built image
+   does not replace an existing Config volume. Kida bootstrap rejects old lifecycle
+   constraints with the migration filename; it does not run ALTER statements. When
+   bootstrap is disabled, verify the migration manually before shared operations.
+8. Check sign-in through both configured application boundaries, password changes
+   in both directions, MFA/recovery-code use, and retirement/deletion of a test
+   account. Password changes revoke shared sessions and prevent Kida refresh. An
+   already-issued access token or product cookie still needs its normal validation
+   or expiry; this is account sharing, not automatic cross-application token access.
+
+Use the approved Haley source-reference builds until the corresponding package
+release is published. These changes do not publish packages or overwrite deployment
+configuration, databases or key files.
+
+
+Identity statistics use the effective shared adapter and recognize both Haley and
+Kida account events, including a configured shared event prefix. Existing derived
+statistics are reconciled on the configured `Kida:Statistics:RepairIntervalHours`
+schedule (24 hours by default). After switching to a different identity database,
+allow that projection repair before treating previously stored counters as current;
+this does not affect account or credential correctness.

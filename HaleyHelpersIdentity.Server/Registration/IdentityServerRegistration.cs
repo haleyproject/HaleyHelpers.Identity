@@ -24,8 +24,19 @@ public static class IdentityServerRegistration
     public static IServiceCollection AddHaleyIdentityEngine(this IServiceCollection services, IConfiguration configuration,
         Action<IdentityServerOptions>? configure = null, bool registerInitializer = true)
     {
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(RegistrationMarker)))
+        {
+            if (configure is not null) services.Configure(configure);
+            if (registerInitializer) services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, IdentityDatabaseHostedService>());
+            return services;
+        }
+        services.AddSingleton(new RegistrationMarker());
         var options = services.AddOptions<IdentityServerOptions>().Bind(configuration.GetSection(IdentityServerOptions.SectionName));
         if (configure is not null) options.Configure(configure);
+        options.Validate(value => !string.IsNullOrWhiteSpace(value.MfaProtectionPurpose) && value.MfaProtectionPurpose.Length <= 200 &&
+            value.PreviousMfaProtectionPurposes is { Length: <= 8 } &&
+            value.PreviousMfaProtectionPurposes.All(purpose => !string.IsNullOrWhiteSpace(purpose) && purpose.Length <= 200),
+            "MFA protection purposes must be nonempty and at most 200 characters; at most eight previous purposes are supported.");
         options.Validate(value => !string.IsNullOrWhiteSpace(value.Adapter) && value.SessionSeconds is >= 60 and <= 86400 &&
             value.PasswordHashIterations >= 100000 && value.PasswordHistoryCount is >= 0 and <= 100 &&
             value.MaximumFailedAttempts is >= 1 and <= 100 && value.LockoutSeconds is >= 60 and <= 86400,
@@ -87,4 +98,6 @@ public static class IdentityServerRegistration
         if (registerInitializer) services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, IdentityDatabaseHostedService>());
         return services;
     }
+    private sealed class RegistrationMarker { }
+
 }

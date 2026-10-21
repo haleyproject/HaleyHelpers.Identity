@@ -1,0 +1,34 @@
+{
+  "Haley": {
+    "Identity": {
+      "Server": {
+        "Adapter": "identity",
+        "IssuerLabel": "DAEP Identity",
+        "PasswordHashIterations": 210000,
+        "MaximumFailedAttempts": 5,
+        "LockoutSeconds": 900,
+        "MfaProtectionPurpose": "haley.identity.mfa.totp",
+        "PreviousMfaProtectionPurposes": [
+          "kida.identity.mfa.totp"
+        ],
+        "SecretProtection": {
+          "ActiveKeyId": "shared-identity-key",
+          "Keys": [
+            {
+              "KeyId": "shared-identity-key",
+              "Path": "Keys/shared-identity.key"
+            }
+          ]
+        },
+        "Mfa": {
+          "EnrollmentSeconds": 600,
+          "MaximumEnrollmentAttempts": 5,
+          "RecoveryCodeCount": 10
+        }
+      }
+    }
+  },
+  "AdapterStrings": {
+    "identity": "key=identity;database=haley_identity;"
+  }
+}

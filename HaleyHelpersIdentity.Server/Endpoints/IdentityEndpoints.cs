@@ -13,8 +13,8 @@ public static class IdentityEndpoints
     {
         var options = new IdentityEndpointOptions();
         configure?.Invoke(options);
-        var group = endpoints.MapGroup(prefix).WithTags("Identity").AddEndpointFilter<IdentityBoundaryFilter>()
-            .AddEndpointFilter<IdentityRateLimitFilter>();
+        var group = endpoints.MapGroup(prefix).WithTags("Identity").AddEndpointFilter<IdentityBoundaryFilter>();
+        if (options.Standalone) group.AddEndpointFilter<IdentityRateLimitFilter>();
         Configure(group.MapGet("/accounts/{userId:guid}", async (Guid userId, IIdentity identity, CancellationToken ct) =>
             (await identity.GetAccountAsync(userId, ct).ConfigureAwait(false)).ToMinimalApiResult()), "GetAccount", options);
         Configure(group.MapPost("/accounts/resolve", async (AccountEmailRequest body, HttpContext context, IIdentity identity, CancellationToken ct) =>
